@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""
+Map Preprocessor: RANSAC ground alignment + wall-based XY axis correction.
+
+Usage:
+  python map_preprocessor.py <input.pcd> <output.pcd> [--visualize]
+
+Steps:
+  1. RANSAC extracts ground plane → compute rotation to align ground with XOY
+  2. Detect dominant vertical planes (walls) → rotate around Z to align XY with walls
+  3. Translate Z so ground = 0
+  4. Save result
+"""
+
+import argparse
+import sys
+import numpy as np
+import open3d as o3d
+
+
+def ransac_ground_plane(pcd, distance_threshold=0.15, num_iterations=2000):
+    """Extract ground plane using RANSAC. Returns (plane_model, inlier_indices)."""
+    plane_model, inliers = pcd.segment_plane(
+        distance_threshold=distance_threshold,
+        ransac_n=3,
+        num_iterations=num_iterations
+    )
+    return plane_model, inliers
+
+
+def compute_gravity_alignment(plane_normal):
+    """
+    Compute rotation matrix that aligns plane_normal with +Z axis.
+    plane_normal: the ground plane normal (should roughly point up).
+    """
+    n = np.array(plane_normal, dtype=np.float64)
+    n = n / np.linalg.norm(n)
+
+    # Ensure normal points "up" (positive Z component)
+    if n[2] < 0:
+        n = -n
+
+    target = np.array([0.0, 0.0, 1.0])
+
+    # Rotation axis = cross product, angle = arccos(dot)
+    v = np.cross(n, target)
+    s = np.linalg.norm(v)
+    c = np.dot(n, target)
+
+    if s < 1e-8:
+        # Already aligned
+        return np.eye(3)
+
+    # Skew-symmetric matrix
+    vx = np.array([
+        [0, -v[2], v[1]],
+        [v[2], 0, -v[0]],
+        [-v[1], v[0], 0]
+    ])
+
+    R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s * s))
+    return R
+
+
+def find_wall_direction_from_normals(pcd, z_threshold=0.3):
+    """
+    Estimate dominant wall direction using point normal estimation.
+    More robust than RANSAC plane extraction for sparse wall points.
+
+    Returns dominant angle (mod pi/2) of wall normals in XY plane, or None.
+    """
+    # Estimate normals
+    pcd.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
+    normals = np.asarray(pcd.normals)
+
+    # Select points with mostly-horizontal normals (wall-like surfaces)
+    horizontal_mask = np.abs(normals[:, 2]) < z_threshold
+    h_normals = normals[horizontal_mask]
+
+    if len(h_normals) < 100:
+        return None
+
+    # Project to XY and normalize
+    n_xy = h_normals[:, :2]
+    n_xy_mag = np.linalg.norm(n_xy, axis=1)
+    valid = n_xy_mag > 0.5
+    n_xy = n_xy[valid]
+    n_xy = n_xy / np.linalg.norm(n_xy, axis=1, keepdims=True)
+
+    if len(n_xy) < 50:
+        return None
+
+    # Compute angles mod pi/2 (walls come in perpendicular pairs)
+    angles = np.arctan2(n_xy[:, 1], n_xy[:, 0]) % (np.pi / 2)
+
+    # Histogram to find peak
+    n_bins = 90
+    hist, edges = np.histogram(angles, bins=n_bins, range=(0, np.pi / 2))
+
+    # Smooth histogram with wrap-around
+    kernel = np.array([0.1, 0.2, 0.4, 0.2, 0.1])
+    hist_ext = np.concatenate([hist[-2:], hist, hist[:2]])
+    hist_smooth = np.convolve(hist_ext, kernel, mode='same')[2:-2]
+
+    peak_bin = np.argmax(hist_smooth)
+    peak_angle = (edges[peak_bin] + edges[peak_bin + 1]) / 2
+
+    # Confidence: peak should be significantly above average
+    mean_count = hist_smooth.mean()
+    peak_count = hist_smooth[peak_bin]
+    confidence = peak_count / max(mean_count, 1)
+
+    print(f"    Horizontal-normal points: {len(n_xy)}")
+    print(f"    Peak angle (mod 90): {np.degrees(peak_angle):.2f} deg")
+    print(f"    Peak strength: {peak_count:.0f} (avg={mean_count:.0f}, ratio={confidence:.1f}x)")
+
+    if confidence < 1.5:
+        print(f"    Low confidence ({confidence:.1f}x), skipping XY alignment")
+        return None
+
+    return peak_angle
+
+
+
+def compute_yaw_rotation(yaw_angle):
+    """Rotation matrix around Z axis by -yaw_angle (to align walls with axes)."""
+    c = np.cos(-yaw_angle)
+    s = np.sin(-yaw_angle)
+    R = np.array([
+        [c, -s, 0],
+        [s, c, 0],
+        [0, 0, 1]
+    ])
+    return R
+
+
+def preprocess_map(input_path, output_path, visualize=False):
+    """Full preprocessing pipeline."""
+    print(f"Loading: {input_path}")
+    pcd = o3d.io.read_point_cloud(input_path)
+    points = np.asarray(pcd.points)
+    print(f"  Points: {len(points)}")
+    print(f"  Bounds: X[{points[:,0].min():.2f}, {points[:,0].max():.2f}] "
+          f"Y[{points[:,1].min():.2f}, {points[:,1].max():.2f}] "
+          f"Z[{points[:,2].min():.2f}, {points[:,2].max():.2f}]")
+
+    # Step 1: RANSAC ground plane extraction
+    print("\n[Step 1] RANSAC ground plane extraction...")
+    plane_model, ground_inliers = ransac_ground_plane(pcd)
+    a, b, c, d = plane_model
+    print(f"  Plane: {a:.4f}x + {b:.4f}y + {c:.4f}z + {d:.4f} = 0")
+    print(f"  Ground inliers: {len(ground_inliers)} ({100*len(ground_inliers)/len(points):.1f}%)")
+    print(f"  Normal: ({a:.4f}, {b:.4f}, {c:.4f})")
+
+    # Step 2: Compute gravity alignment rotation
+    print("\n[Step 2] Gravity alignment...")
+    R_gravity = compute_gravity_alignment([a, b, c])
+    angle_deg = np.degrees(np.arccos(np.clip(np.dot([a, b, c] / np.linalg.norm([a, b, c]), [0, 0, 1]), -1, 1)))
+    print(f"  Tilt angle: {angle_deg:.2f} degrees")
+
+    # Apply gravity rotation
+    pcd.rotate(R_gravity, center=(0, 0, 0))
+    points = np.asarray(pcd.points)
+
+    # Step 3: Wall-based XY alignment via normal histogram
+    print("\n[Step 3] Wall direction detection (normal histogram)...")
+    yaw_correction = 0.0
+    dominant_angle = find_wall_direction_from_normals(pcd)
+
+    if dominant_angle is not None:
+        yaw_correction = dominant_angle
+        print(f"  Applying yaw correction: -{np.degrees(yaw_correction):.2f} degrees")
+        R_yaw = compute_yaw_rotation(yaw_correction)
+        pcd.rotate(R_yaw, center=(0, 0, 0))
+        points = np.asarray(pcd.points)
+    else:
+        print("  Could not determine wall direction, skipping XY alignment")
+
+    # Step 4: Translate origin to ground center
+    print("\n[Step 4] Origin → ground center...")
+    # Re-extract ground after rotation to get accurate position
+    plane_model2, ground_inliers2 = ransac_ground_plane(pcd, distance_threshold=0.1)
+    ground_points = points[ground_inliers2]
+    ground_center_x = np.median(ground_points[:, 0])
+    ground_center_y = np.median(ground_points[:, 1])
+    ground_z = np.median(ground_points[:, 2])
+    print(f"  Ground center: ({ground_center_x:.3f}, {ground_center_y:.3f}, {ground_z:.3f})")
+
+    points[:, 0] -= ground_center_x
+    points[:, 1] -= ground_center_y
+    points[:, 2] -= ground_z
+    pcd.points = o3d.utility.Vector3dVector(points)
+
+    # Final stats
+    points = np.asarray(pcd.points)
+    print(f"\n[Result]")
+    print(f"  Bounds: X[{points[:,0].min():.2f}, {points[:,0].max():.2f}] "
+          f"Y[{points[:,1].min():.2f}, {points[:,1].max():.2f}] "
+          f"Z[{points[:,2].min():.2f}, {points[:,2].max():.2f}]")
+
+    # Build transform info
+    T_full = np.eye(4)
+    R_combined = compute_yaw_rotation(yaw_correction) @ R_gravity if yaw_correction != 0 else R_gravity
+    T_full[:3, :3] = R_combined
+    T_full[0, 3] = -ground_center_x
+    T_full[1, 3] = -ground_center_y
+    T_full[2, 3] = -ground_z
+    print(f"\n  Combined rotation matrix:")
+    print(f"    {T_full[0,:3]}")
+    print(f"    {T_full[1,:3]}")
+    print(f"    {T_full[2,:3]}")
+    print(f"  Z offset: {-ground_z:.4f}")
+
+    # Save
+    print(f"\nSaving: {output_path}")
+    o3d.io.write_point_cloud(output_path, pcd, write_ascii=False)
+    print("Done.")
+
+    if visualize:
+        # Color ground green, rest gray
+        colors = np.full((len(points), 3), 0.6)
+        ground_mask = np.abs(points[:, 2]) < 0.15
+        colors[ground_mask] = [0.2, 0.8, 0.3]
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=2.0)
+        o3d.visualization.draw_geometries([pcd, coord_frame],
+                                          window_name="Map Preprocessor Result")
+
+    return T_full
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Map Preprocessor')
+    parser.add_argument('input', help='Input PCD file')
+    parser.add_argument('output', help='Output PCD file')
+    parser.add_argument('--visualize', action='store_true', help='Show Open3D visualization')
+    args = parser.parse_args()
+
+    preprocess_map(args.input, args.output, args.visualize)

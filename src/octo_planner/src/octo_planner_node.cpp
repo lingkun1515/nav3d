@@ -380,7 +380,11 @@ private:
     cloud.is_bigendian = false;
 
     sensor_msgs::PointCloud2Modifier modifier(cloud);
-    modifier.setPointCloud2FieldsByString(2, "xyz", "intensity");
+    modifier.setPointCloud2Fields(4,
+      "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "intensity", 1, sensor_msgs::msg::PointField::FLOAT32);
     modifier.resize(costmap.size());
 
     sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
