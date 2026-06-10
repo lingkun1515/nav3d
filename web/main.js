@@ -183,27 +183,54 @@ function makeVoxelLayer(points, color, opacity = 1.0) {
   return { group, pickMesh: fillMesh };
 }
 
+// Accumulate chunked markers: collect all chunks within a time window then render
+let occupiedPointsBuf = [];
+let traversablePointsBuf = [];
+let preblockedPointsBuf = [];
+let occupiedRenderTimer = null;
+let traversableRenderTimer = null;
+let preblockedRenderTimer = null;
+const CHUNK_COLLECT_MS = 500;
+
 function setOccupiedMarker(msg) {
-  clearGroup(occupiedGroup);
   if (!msg.points || msg.points.length === 0) return;
-  const { group } = makeVoxelLayer(msg.points, 0xf6c85d, 0.95);
-  occupiedGroup.add(group);
-  mapStatus.textContent = `${msg.points.length} 体素`;
+  if (msg.id === 0) occupiedPointsBuf = [];
+  occupiedPointsBuf.push(...msg.points);
+  if (occupiedRenderTimer) clearTimeout(occupiedRenderTimer);
+  occupiedRenderTimer = setTimeout(() => {
+    clearGroup(occupiedGroup);
+    const { group } = makeVoxelLayer(occupiedPointsBuf, 0xf6c85d, 0.95);
+    occupiedGroup.add(group);
+    mapStatus.textContent = `${occupiedPointsBuf.length} 体素`;
+    occupiedRenderTimer = null;
+  }, CHUNK_COLLECT_MS);
 }
 
 function setTraversableMarker(msg) {
-  clearGroup(traversableGroup);
   if (!msg.points || msg.points.length === 0) return;
-  const { group, pickMesh } = makeVoxelLayer(msg.points, 0x58ef74, 0.22);
-  traversableGroup.add(group);
-  traversablePickMesh = pickMesh;
+  if (msg.id === 0) traversablePointsBuf = [];
+  traversablePointsBuf.push(...msg.points);
+  if (traversableRenderTimer) clearTimeout(traversableRenderTimer);
+  traversableRenderTimer = setTimeout(() => {
+    clearGroup(traversableGroup);
+    const { group, pickMesh } = makeVoxelLayer(traversablePointsBuf, 0x58ef74, 0.22);
+    traversableGroup.add(group);
+    traversablePickMesh = pickMesh;
+    traversableRenderTimer = null;
+  }, CHUNK_COLLECT_MS);
 }
 
 function setPreblockedMarker(msg) {
-  clearGroup(preblockedGroup);
   if (!msg.points || msg.points.length === 0) return;
-  const { group } = makeVoxelLayer(msg.points, 0x4d83ff, 0.92);
-  preblockedGroup.add(group);
+  if (msg.id === 0) preblockedPointsBuf = [];
+  preblockedPointsBuf.push(...msg.points);
+  if (preblockedRenderTimer) clearTimeout(preblockedRenderTimer);
+  preblockedRenderTimer = setTimeout(() => {
+    clearGroup(preblockedGroup);
+    const { group } = makeVoxelLayer(preblockedPointsBuf, 0x4d83ff, 0.92);
+    preblockedGroup.add(group);
+    preblockedRenderTimer = null;
+  }, CHUNK_COLLECT_MS);
 }
 
 function setRiskCostCloud(msg) {

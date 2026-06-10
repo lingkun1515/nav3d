@@ -60,29 +60,30 @@ private:
 
   void setup_pub_sub()
   {
+    auto qos_reliable = rclcpp::QoS(5).reliable();
     auto qos_tl = rclcpp::QoS(1).transient_local().reliable();
 
     octomap_pub_ = create_publisher<octomap_msgs::msg::Octomap>("/octomap", qos_tl);
     occupied_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/octomap_occupied_markers", qos_tl);
+      "/octomap_occupied_markers", qos_reliable);
     traversable_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/traversable_cells_markers", qos_tl);
+      "/traversable_cells_markers", qos_reliable);
     preblocked_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/preblocked_cells_markers", qos_tl);
+      "/preblocked_cells_markers", qos_reliable);
     risk_cost_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-      "/risk_cost_cells", qos_tl);
+      "/risk_cost_cells", qos_reliable);
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/planned_path", qos_tl);
 
     start_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      "/start_point", qos_tl,
+      "/start_point", qos_reliable,
       [this](geometry_msgs::msg::PointStamped::SharedPtr msg) { on_start(msg); });
 
     goal_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      "/goal_point", qos_tl,
+      "/goal_point", qos_reliable,
       [this](geometry_msgs::msg::PointStamped::SharedPtr msg) { on_goal(msg); });
 
     goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-      "/goal_pose", qos_tl,
+      "/goal_pose", qos_reliable,
       [this](geometry_msgs::msg::PoseStamped::SharedPtr msg) { on_goal_pose(msg); });
 
     pcd_cmd_sub_ = create_subscription<std_msgs::msg::String>(
@@ -254,113 +255,100 @@ private:
     publish_risk_cost_cloud();
   }
 
+  static constexpr size_t MAX_POINTS_PER_MSG = 5000;
+
+  void publish_marker_chunked(
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr & pub,
+    const std::vector<geometry_msgs::msg::Point> & all_points,
+    const std::string & ns, double res,
+    float r, float g, float b, float a)
+  {
+    std::string frame_id = get_parameter("frame_id").as_string();
+    int chunk_id = 0;
+
+    for (size_t offset = 0; offset < all_points.size(); offset += MAX_POINTS_PER_MSG) {
+      visualization_msgs::msg::Marker marker;
+      marker.header.stamp = now();
+      marker.header.frame_id = frame_id;
+      marker.ns = ns;
+      marker.id = chunk_id++;
+      marker.type = visualization_msgs::msg::Marker::CUBE_LIST;
+      marker.action = visualization_msgs::msg::Marker::ADD;
+      marker.scale.x = res;
+      marker.scale.y = res;
+      marker.scale.z = res;
+      marker.color.r = r;
+      marker.color.g = g;
+      marker.color.b = b;
+      marker.color.a = a;
+      marker.pose.orientation.w = 1.0;
+
+      size_t end = std::min(offset + MAX_POINTS_PER_MSG, all_points.size());
+      marker.points.assign(all_points.begin() + offset, all_points.begin() + end);
+      pub->publish(marker);
+    }
+  }
+
   void publish_occupied_markers()
   {
     if (!octree_) return;
-    std::string frame_id = get_parameter("frame_id").as_string();
     double res = octree_->getResolution();
 
-    visualization_msgs::msg::Marker marker;
-    marker.header.stamp = now();
-    marker.header.frame_id = frame_id;
-    marker.ns = "occupied_voxels";
-    marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::CUBE_LIST;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.scale.x = res;
-    marker.scale.y = res;
-    marker.scale.z = res;
-    marker.color.r = 0.95f;
-    marker.color.g = 0.45f;
-    marker.color.b = 0.15f;
-    marker.color.a = 0.95f;
-    marker.pose.orientation.w = 1.0;
-
+    std::vector<geometry_msgs::msg::Point> points;
     for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
       if (octree_->isNodeOccupied(*it)) {
         geometry_msgs::msg::Point p;
         p.x = it.getX();
         p.y = it.getY();
         p.z = it.getZ();
-        marker.points.push_back(p);
+        points.push_back(p);
       }
     }
 
-    occupied_marker_pub_->publish(marker);
+    publish_marker_chunked(occupied_marker_pub_, points,
+                           "occupied_voxels", res, 0.95f, 0.45f, 0.15f, 0.95f);
   }
 
   void publish_traversable_markers()
   {
     if (!planner_) return;
-    std::string frame_id = get_parameter("frame_id").as_string();
     double res = planner_->getResolution();
-
     const auto & cells = planner_->getTraversableCells();
 
-    visualization_msgs::msg::Marker marker;
-    marker.header.stamp = now();
-    marker.header.frame_id = frame_id;
-    marker.ns = "traversable_cells";
-    marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::CUBE_LIST;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.scale.x = res;
-    marker.scale.y = res;
-    marker.scale.z = res;
-    marker.color.r = 0.20f;
-    marker.color.g = 0.95f;
-    marker.color.b = 0.55f;
-    marker.color.a = 0.22f;
-    marker.pose.orientation.w = 1.0;
-
-    marker.points.reserve(cells.size());
+    std::vector<geometry_msgs::msg::Point> points;
+    points.reserve(cells.size());
     for (const auto & c : cells) {
       auto world = planner_->gridToWorldPublic(c);
       geometry_msgs::msg::Point p;
       p.x = world.x();
       p.y = world.y();
       p.z = world.z();
-      marker.points.push_back(p);
+      points.push_back(p);
     }
 
-    traversable_marker_pub_->publish(marker);
+    publish_marker_chunked(traversable_marker_pub_, points,
+                           "traversable_cells", res, 0.20f, 0.95f, 0.55f, 0.22f);
   }
 
   void publish_preblocked_markers()
   {
     if (!planner_) return;
-    std::string frame_id = get_parameter("frame_id").as_string();
     double res = planner_->getResolution();
-
     const auto & cells = planner_->getPreblockedCells();
 
-    visualization_msgs::msg::Marker marker;
-    marker.header.stamp = now();
-    marker.header.frame_id = frame_id;
-    marker.ns = "preblocked_cells";
-    marker.id = 0;
-    marker.type = visualization_msgs::msg::Marker::CUBE_LIST;
-    marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.scale.x = res;
-    marker.scale.y = res;
-    marker.scale.z = res;
-    marker.color.r = 0.30f;
-    marker.color.g = 0.51f;
-    marker.color.b = 1.0f;
-    marker.color.a = 0.92f;
-    marker.pose.orientation.w = 1.0;
-
-    marker.points.reserve(cells.size());
+    std::vector<geometry_msgs::msg::Point> points;
+    points.reserve(cells.size());
     for (const auto & c : cells) {
       auto world = planner_->gridToWorldPublic(c);
       geometry_msgs::msg::Point p;
       p.x = world.x();
       p.y = world.y();
       p.z = world.z();
-      marker.points.push_back(p);
+      points.push_back(p);
     }
 
-    preblocked_marker_pub_->publish(marker);
+    publish_marker_chunked(preblocked_marker_pub_, points,
+                           "preblocked_cells", res, 0.30f, 0.51f, 1.0f, 0.92f);
   }
 
   void publish_risk_cost_cloud()
