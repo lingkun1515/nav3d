@@ -15,6 +15,7 @@
   <depend>octomap_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>visualization_msgs</depend>
 
   <build_depend>liboctomap-dev</build_depend>

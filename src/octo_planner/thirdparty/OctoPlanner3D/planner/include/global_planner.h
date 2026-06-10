@@ -80,6 +80,12 @@ struct PlannerConfig
   int preblocked_costmap_radius_cells = 3;
   double preblocked_costmap_weight = 1.5;
   bool lowest_traversable_only = false;
+
+  // Radical infill: bridge disconnected traversable regions
+  bool radical_infill_enabled = false;
+  double radical_infill_radius_m = 1.0;
+  double radical_infill_clearance_m = 1.0;
+  double radical_infill_half_height_m = 0.1;
 };
 
 class GlobalPlanner
@@ -154,6 +160,8 @@ private:
 
   void rebuildDerivedLayers();
 
+  void radicalInfill();
+
   bool isCellTraversable(
     const GridIndex & idx,
     double robot_radius,
@@ -208,6 +216,11 @@ private:
   int preblocked_costmap_radius_cells_ = 3;
   double preblocked_costmap_weight_ = 1.5;
   bool lowest_traversable_only_ = false;
+
+  bool radical_infill_enabled_ = false;
+  double radical_infill_radius_m_ = 1.0;
+  double radical_infill_clearance_m_ = 1.0;
+  double radical_infill_half_height_m_ = 0.1;
 
   bool map_ready_ = false;
   bool has_start_ = false;

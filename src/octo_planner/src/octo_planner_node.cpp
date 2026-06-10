@@ -11,6 +11,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "octomap_msgs/msg/octomap.hpp"
 #include "octomap_msgs/conversions.h"
@@ -46,6 +47,7 @@ private:
     declare_parameter("min_cluster_voxels", 4);
     declare_parameter("enable_ground_infill", true);
     declare_parameter("ground_infill_neighbor_threshold", 3);
+    declare_parameter("ground_infill_density_threshold", 0.02);
     declare_parameter("robot_radius", 0.25);
     declare_parameter("max_iterations", 500000);
     declare_parameter("snap_search_radius_cells", 8);
@@ -57,7 +59,12 @@ private:
     declare_parameter("preblocked_costmap_radius_cells", 3);
     declare_parameter("preblocked_costmap_weight", 2.5);
     declare_parameter("lowest_traversable_only", false);
+    declare_parameter("radical_infill_enabled", false);
+    declare_parameter("radical_infill_radius_m", 1.0);
+    declare_parameter("radical_infill_clearance_m", 1.0);
+    declare_parameter("radical_infill_half_height_m", 0.1);
     declare_parameter("octomap_publish_period_s", 1.0);
+    declare_parameter("auto_publish_enabled", false);
   }
 
   void setup_pub_sub()
@@ -92,10 +99,26 @@ private:
       "/pcd_file_cmd", rclcpp::QoS(1).reliable(),
       [this](std_msgs::msg::String::SharedPtr msg) { load_map(msg->data); });
 
-    double period = get_parameter("octomap_publish_period_s").as_double();
-    republish_timer_ = create_wall_timer(
-      std::chrono::duration<double>(period),
-      [this]() { republish_all(); });
+    request_map_srv_ = create_service<std_srvs::srv::Trigger>(
+      "/request_map",
+      [this](const std_srvs::srv::Trigger::Request::SharedPtr,
+              std_srvs::srv::Trigger::Response::SharedPtr res) {
+        if (!map_ready_) {
+          res->success = false;
+          res->message = "Map not ready yet.";
+          return;
+        }
+        republish_all();
+        res->success = true;
+        res->message = "Map data republished.";
+      });
+
+    if (get_parameter("auto_publish_enabled").as_bool()) {
+      double period = get_parameter("octomap_publish_period_s").as_double();
+      republish_timer_ = create_wall_timer(
+        std::chrono::duration<double>(period),
+        [this]() { republish_all(); });
+    }
   }
 
   void load_map(const std::string & pcd_file)
@@ -111,6 +134,7 @@ private:
     conv_cfg.save_to_file = false;
     conv_cfg.enable_ground_infill = get_parameter("enable_ground_infill").as_bool();
     conv_cfg.ground_infill_neighbor_threshold = get_parameter("ground_infill_neighbor_threshold").as_int();
+    conv_cfg.ground_infill_density_threshold = get_parameter("ground_infill_density_threshold").as_double();
 
     converter_ = std::make_unique<pcd2octomap::Pcd2OctomapConverter>();
     converter_->configure(conv_cfg);
@@ -141,6 +165,10 @@ private:
     planner_cfg.preblocked_costmap_radius_cells = get_parameter("preblocked_costmap_radius_cells").as_int();
     planner_cfg.preblocked_costmap_weight = get_parameter("preblocked_costmap_weight").as_double();
     planner_cfg.lowest_traversable_only = get_parameter("lowest_traversable_only").as_bool();
+    planner_cfg.radical_infill_enabled = get_parameter("radical_infill_enabled").as_bool();
+    planner_cfg.radical_infill_radius_m = get_parameter("radical_infill_radius_m").as_double();
+    planner_cfg.radical_infill_clearance_m = get_parameter("radical_infill_clearance_m").as_double();
+    planner_cfg.radical_infill_half_height_m = get_parameter("radical_infill_half_height_m").as_double();
 
     planner_ = std::make_unique<global_planner::GlobalPlanner>();
     planner_->configure(planner_cfg);
@@ -420,6 +448,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pcd_cmd_sub_;
 
   rclcpp::TimerBase::SharedPtr republish_timer_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_map_srv_;
 };
 
 int main(int argc, char ** argv)

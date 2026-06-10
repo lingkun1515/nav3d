@@ -14,6 +14,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(octomap REQUIRED)
@@ -77,6 +78,7 @@ ament_target_dependencies(octo_planner_node
   nav_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   visualization_msgs
   octomap_msgs
 )

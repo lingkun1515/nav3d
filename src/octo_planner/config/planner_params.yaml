@@ -6,11 +6,14 @@ octo_planner_node:
 
     # Converter parameters
     resolution: 0.2
-    min_points_per_voxel: 1
+    min_points_per_voxel: 3
     min_cluster_voxels: 2
+    enable_ground_infill: true
+    ground_infill_neighbor_threshold: 3
+    ground_infill_density_threshold: 0.02
 
     # Planner parameters
-    robot_radius: 0.05
+    robot_radius: 0.0
     max_iterations: 500000
     snap_search_radius_cells: 8
     require_ground_support: true
@@ -22,5 +25,12 @@ octo_planner_node:
     preblocked_costmap_weight: 2.5
     lowest_traversable_only: false
 
+    # Radical infill: bridge disconnected traversable regions
+    radical_infill_enabled: true
+    radical_infill_radius_m: 1.0
+    radical_infill_clearance_m: 1.0
+    radical_infill_half_height_m: 0.1
+
     # Publishing
+    auto_publish_enabled: false
     octomap_publish_period_s: 5.0

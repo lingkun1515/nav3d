@@ -26,6 +26,10 @@ namespace global_planner
         preblocked_costmap_radius_cells_ = config.preblocked_costmap_radius_cells;
         preblocked_costmap_weight_ = config.preblocked_costmap_weight;
         lowest_traversable_only_ = config.lowest_traversable_only;
+        radical_infill_enabled_ = config.radical_infill_enabled;
+        radical_infill_radius_m_ = config.radical_infill_radius_m;
+        radical_infill_clearance_m_ = config.radical_infill_clearance_m;
+        radical_infill_half_height_m_ = config.radical_infill_half_height_m;
     }
 
     const std::unordered_set<GridIndex, GridIndexHash>& GlobalPlanner::getTraversableCells() const
@@ -72,6 +76,9 @@ namespace global_planner
         map_ready_ = true;
         rebuildPreblockedCells();
         rebuildDerivedLayers();
+        if (radical_infill_enabled_) {
+          radicalInfill();
+        }
         rebuildPreblockedCostmap();
     }
 
@@ -528,40 +535,72 @@ namespace global_planner
 
         const bool require_ground_support = require_ground_support_;
         const bool strict_direct_ground_support = strict_direct_ground_support_;
-        const int support_xy_radius_cells = ground_support_xy_radius_cells_;  
+        const int support_xy_radius_cells = ground_support_xy_radius_cells_;
         const int support_depth_cells = ground_support_depth_cells_;
         const double robot_radius = robot_radius_;
         const bool lowest_traversable_only = lowest_traversable_only_;
 
-        double min_x, min_y, min_z, max_x, max_y, max_z;
-        octree_->getMetricMin(min_x, min_y, min_z);
-        octree_->getMetricMax(max_x, max_y, max_z);
-        const GridIndex min_idx = worldToGrid(min_x, min_y, min_z);
-        const GridIndex max_idx = worldToGrid(max_x, max_y, max_z);
+        // Collect all occupied grid cells — only cells above these can have ground support.
+        std::unordered_set<GridIndex, GridIndexHash> occupied_set;
+        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+            if (!octree_->isNodeOccupied(*it)) continue;
+            occupied_set.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
+        }
 
-        for (int x = min_idx.x; x <= max_idx.x; ++x) {
-        for (int y = min_idx.y; y <= max_idx.y; ++y) {
-            for (int z = min_idx.z; z <= max_idx.z; ++z) {
-            const GridIndex idx{x, y, z};
-            if (!isInsideMetricBounds(idx) || isOccupiedCell(idx)) {
-                continue;
-            }
-            if (isCellTraversable(
-                idx, robot_radius, require_ground_support, strict_direct_ground_support,
-                support_xy_radius_cells, support_depth_cells))
-            {
-                traversable_cells_.insert(idx);
-                if (lowest_traversable_only) {
-                break;
+        // Cells that could possibly be traversable must have an occupied cell below.
+        // Instead of scanning the entire bbox, iterate only occupied cells and check
+        // the candidates above them.
+        const int max_dz_cand = require_ground_support
+            ? (strict_direct_ground_support ? 1 : support_depth_cells)
+            : 1;
+        const int max_xy_cand = require_ground_support
+            ? (strict_direct_ground_support ? 0 : support_xy_radius_cells)
+            : 0;
+
+        std::unordered_set<GridIndex, GridIndexHash> checked;
+
+        // Per-(x,y) set for lowest_traversable_only fast-path
+        std::unordered_set<uint64_t> columns_done;
+
+        printf("rebuildDerivedLayers: scanning %zu occupied cells (xy_radius=%d, z_depth=%d)...\n",
+               occupied_set.size(), max_xy_cand, max_dz_cand);
+
+        for (const auto & occ : occupied_set) {
+            for (int dx = -max_xy_cand; dx <= max_xy_cand; ++dx) {
+                for (int dy = -max_xy_cand; dy <= max_xy_cand; ++dy) {
+                    for (int dz = 1; dz <= max_dz_cand; ++dz) {
+                        const GridIndex candidate{occ.x + dx, occ.y + dy, occ.z + dz};
+
+                        if (checked.count(candidate)) continue;
+                        if (lowest_traversable_only) {
+                            uint64_t col = (static_cast<uint64_t>(static_cast<uint32_t>(candidate.x)) << 32)
+                                         | static_cast<uint32_t>(candidate.y);
+                            if (columns_done.count(col)) continue;
+                        }
+                        if (!isInsideMetricBounds(candidate)) continue;
+                        if (occupied_set.count(candidate)) continue;
+
+                        checked.insert(candidate);
+
+                        if (isCellTraversable(
+                            candidate, robot_radius, require_ground_support,
+                            strict_direct_ground_support,
+                            support_xy_radius_cells, support_depth_cells))
+                        {
+                            traversable_cells_.insert(candidate);
+                            if (lowest_traversable_only) {
+                                uint64_t col = (static_cast<uint64_t>(static_cast<uint32_t>(candidate.x)) << 32)
+                                             | static_cast<uint32_t>(candidate.y);
+                                columns_done.insert(col);
+                            }
+                        }
+                    }
                 }
             }
-            }
-        }
         }
 
-        // publishCellSetMarker(
-        // traversable_cells_, traversable_marker_pub_, "traversable_cells", 0.20F, 0.95F, 0.55F,
-        // 0.55F);
+        printf("Traversable cells rebuilt: %zu cells (lowest_only=%d)\n",
+               traversable_cells_.size(), lowest_traversable_only ? 1 : 0);
     }
 
     bool GlobalPlanner::isInsideMetricBounds(const GridIndex & idx) const
@@ -658,10 +697,145 @@ namespace global_planner
         // publishRiskCostCloud();
     }
 
+    void GlobalPlanner::radicalInfill()
+    {
+        if (!octree_ || traversable_cells_.empty()) {
+            return;
+        }
 
+        const double res = octree_->getResolution();
+        const int radius_cells = std::max(1,
+            static_cast<int>(std::ceil(radical_infill_radius_m_ / res)));
+        const int half_z_cells = std::max(1,
+            static_cast<int>(std::ceil(radical_infill_half_height_m_ / res)));
+        const int clearance_cells = std::max(1,
+            static_cast<int>(std::ceil(radical_infill_clearance_m_ / res)));
 
+        // Step 1: 26-connected components of traversable_cells_
+        const std::vector<GridIndex> dirs_26 = make26Directions();
+        std::unordered_map<GridIndex, int, GridIndexHash> component_id;
+        std::vector<std::vector<GridIndex>> components;
 
+        for (const auto & cell : traversable_cells_) {
+            if (component_id.find(cell) != component_id.end()) continue;
+            const int comp_idx = static_cast<int>(components.size());
+            std::vector<GridIndex> comp;
+            std::queue<GridIndex> q;
+            q.push(cell);
+            component_id[cell] = comp_idx;
+            while (!q.empty()) {
+                const GridIndex cur = q.front();
+                q.pop();
+                comp.push_back(cur);
+                for (const auto & d : dirs_26) {
+                    const GridIndex nbr{cur.x + d.x, cur.y + d.y, cur.z + d.z};
+                    if (traversable_cells_.find(nbr) == traversable_cells_.end()) continue;
+                    if (component_id.find(nbr) != component_id.end()) continue;
+                    component_id[nbr] = comp_idx;
+                    q.push(nbr);
+                }
+            }
+            components.push_back(std::move(comp));
+        }
 
+        printf("RadicalInfill: %zu components from %zu traversable cells.\n",
+               components.size(), traversable_cells_.size());
 
+        if (components.size() < 2) {
+            printf("RadicalInfill: nothing to bridge.\n");
+            return;
+        }
+
+        // Find edge cells per component (limit per component)
+        const size_t max_edge_per_comp = 500;
+        std::vector<std::vector<GridIndex>> edge_cells(components.size());
+        for (size_t ci = 0; ci < components.size(); ++ci) {
+            for (const auto & cell : components[ci]) {
+                if (edge_cells[ci].size() >= max_edge_per_comp) break;
+                for (int dx = -1; dx <= 1; ++dx) {
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        if (dx == 0 && dy == 0) continue;
+                        const GridIndex nbr{cell.x + dx, cell.y + dy, cell.z};
+                        if (traversable_cells_.find(nbr) == traversable_cells_.end()) {
+                            edge_cells[ci].push_back(cell);
+                            goto next_cell;
+                        }
+                    }
+                }
+            next_cell:;
+            }
+        }
+
+        std::unordered_set<GridIndex, GridIndexHash> filled;
+
+        for (size_t ci = 0; ci < components.size(); ++ci) {
+            for (const auto & seed : edge_cells[ci]) {
+                for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+                    for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+                        if (dx * dx + dy * dy > radius_cells * radius_cells) continue;
+                        for (int dz = -half_z_cells; dz <= half_z_cells; ++dz) {
+                            const GridIndex target{seed.x + dx, seed.y + dy, seed.z + dz};
+                            if (traversable_cells_.find(target) == traversable_cells_.end()) continue;
+                            auto cid_it = component_id.find(target);
+                            if (cid_it == component_id.end()) continue;
+                            int cj = cid_it->second;
+                            if (static_cast<size_t>(cj) == ci) continue;
+
+                            // Bresenham 2D line from seed to target, Z-interpolated
+                            const int x0 = seed.x, y0 = seed.y;
+                            const int x1 = target.x, y1 = target.y;
+                            const int dx_abs = std::abs(x1 - x0);
+                            const int dy_abs = std::abs(y1 - y0);
+                            const int sx = (x0 < x1) ? 1 : -1;
+                            const int sy = (y0 < y1) ? 1 : -1;
+                            const int steps = std::max(dx_abs, dy_abs) + 1;
+                            int err = dx_abs - dy_abs;
+                            int cx = x0, cy = y0;
+
+                            for (int step = 0; step < steps; ++step) {
+                                const double t = (steps <= 1) ? 0.0 :
+                                    static_cast<double>(step) / static_cast<double>(steps - 1);
+                                const int cz = static_cast<int>(
+                                    std::round(static_cast<double>(seed.z) +
+                                        t * static_cast<double>(target.z - seed.z)));
+
+                                const GridIndex lc{cx, cy, cz};
+
+                                if (traversable_cells_.count(lc) || filled.count(lc)) {
+                                    goto step_advance;
+                                }
+                                if (isOccupiedCell(lc)) {
+                                    goto step_advance;
+                                }
+                                {
+                                    bool cell_blocked = false;
+                                    for (int dz_chk = 1; dz_chk <= clearance_cells; ++dz_chk) {
+                                        const GridIndex above{lc.x, lc.y, lc.z + dz_chk};
+                                        if (isOccupiedCell(above)) {
+                                            cell_blocked = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!cell_blocked) {
+                                        filled.insert(lc);
+                                    }
+                                }
+
+                            step_advance:
+                                if (cx == x1 && cy == y1) break;
+                                const int e2 = 2 * err;
+                                if (e2 > -dy_abs) { err -= dy_abs; cx += sx; }
+                                if (e2 < dx_abs)  { err += dx_abs; cy += sy; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        printf("RadicalInfill: %zu components, filled %zu cells.\n",
+               components.size(), filled.size());
+        traversable_cells_.insert(filled.begin(), filled.end());
+    }
 
 }
