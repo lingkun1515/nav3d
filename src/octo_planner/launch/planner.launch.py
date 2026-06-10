@@ -13,7 +13,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'pcd_file', default_value='',
+            'pcd_file', default_value='/home/lenovo/Projects/NavProject/Dog3DNav/maps/building_map.pcd',
             description='Path to PCD map file'),
 
         DeclareLaunchArgument(
@@ -39,7 +39,7 @@ def generate_launch_description():
             package='rosbridge_server',
             executable='rosbridge_websocket',
             name='rosbridge_websocket',
-            output='screen',
+            output='log',
             parameters=[{'port': 9090}],
             condition=launch.conditions.IfCondition(
                 LaunchConfiguration('launch_rosbridge')),

@@ -1,0 +1,108 @@
+localPlanner:
+  ros__parameters:
+    pathFolder: ""
+
+    # Vehicle geometry
+    vehicleLength: 0.4
+    vehicleWidth: 0.4
+    sensorOffsetX: 0.0
+    sensorOffsetY: 0.0
+    vehicleLengthSlot: 0.05
+    vehicleWidthMargin: 0.1
+    marginYawRateRatio: 0.0
+    twoWayDrive: true
+
+    # Perception
+    laserVoxelSize: 0.05
+    terrainVoxelSize: 0.2
+    useTerrainAnalysis: false
+    checkObstacle: true
+    checkRotObstacle: false
+    adjacentRange: 3.5
+    obstacleHeightThre: 0.2
+    groundHeightThre: 0.1
+    costHeightThre1: 0.15
+    costHeightThre2: 0.1
+    useCost: false
+
+    # Path scoring
+    slowPathNumThre: 5
+    slowGroupNumThre: 1
+    surPointThre: 2
+    pointPerPathThre: 2
+    minRelZ: -0.5
+    maxRelZ: 0.25
+    maxSpeed: 1.0
+    dirWeight: 0.02
+    dirThre: 90.0
+    dirToVehicle: false
+    pathScale: 1.0
+    minPathScale: 0.75
+    pathScaleStep: 0.25
+    pathScaleBySpeed: true
+    minPathRange: 1.0
+    pathRangeStep: 0.5
+    pathRangeBySpeed: true
+    pathCropByGoal: true
+
+    # Autonomy
+    autonomyMode: false
+    autonomySpeed: 1.0
+    joyToSpeedDelay: 2.0
+    joyToCheckObstacleDelay: 5.0
+    freezeAng: 90.0
+    freezeTime: 2.0
+    omniDirGoalThre: 1.0
+    goalClearRange: 0.5
+    goalBehindRange: 0.8
+    goalX: 0.0
+    goalY: 0.0
+
+pathFollower:
+  ros__parameters:
+    # Hardware
+    realRobot: false
+    serialPort: "/dev/ttyACM0"
+    baudrate: 115200
+    sensorOffsetX: 0.0
+    sensorOffsetY: 0.0
+    pubSkipNum: 1
+
+    # Drive mode
+    twoWayDrive: true
+
+    # Pure-pursuit
+    lookAheadDis: 0.5
+
+    # Controller gains
+    yawRateGain: 7.5
+    stopYawRateGain: 7.5
+    maxYawRate: 45.0
+    maxSpeed: 1.0
+    maxAccel: 1.0
+    switchTimeThre: 1.0
+    dirDiffThre: 0.1
+    omniDirGoalThre: 1.0
+    omniDirDiffThre: 1.5
+    stopDisThre: 0.2
+    slowDwnDisThre: 1.0
+
+    # Incline handling
+    useInclRateToSlow: false
+    inclRateThre: 120.0
+    slowRate1: 0.25
+    slowRate2: 0.5
+    slowRate3: 0.75
+    slowTime1: 2.0
+    slowTime2: 2.0
+    useSideAvoid: false
+    useInclToStop: false
+    inclThre: 45.0
+    stopTime: 5.0
+    noRotAtStop: false
+    noRotAtGoal: true
+
+    # Autonomy
+    autonomyMode: false
+    autonomySpeed: 1.0
+    joyToSpeedDelay: 2.0
