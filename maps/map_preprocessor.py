@@ -3,13 +3,20 @@
 Map Preprocessor: RANSAC ground alignment + wall-based XY axis correction.
 
 Usage:
-  python map_preprocessor.py <input.pcd> <output.pcd> [--visualize]
+  python map_preprocessor.py <input.pcd> <output.pcd> [options]
 
-Steps:
+Options:
+  --visualize    Show Open3D 3D preview
+  --no-align     Skip coordinate alignment (default: alignment ON)
+  --infill       Enable multi-floor ground infill (default: OFF)
+  --voxel_size N Voxel downsampling grid size (m), default: disabled
+
+Steps (when alignment enabled):
   1. RANSAC extracts ground plane → compute rotation to align ground with XOY
   2. Detect dominant vertical planes (walls) → rotate around Z to align XY with walls
-  3. Translate Z so ground = 0
-  4. Save result
+  3. Translate so ground center = origin
+  4. (optional) Ground infill → fill sparse floor gaps
+  5. Save result
 """
 
 import argparse
@@ -239,7 +246,8 @@ def floor_infill(points, resolution=0.2, min_floor_density=0.15, neighbor_thresh
     return np.empty((0, 3))
 
 
-def preprocess_map(input_path, output_path, visualize=False):
+def preprocess_map(input_path, output_path, visualize=False,
+                   do_align=True, do_infill=False, voxel_size=None):
     """Full preprocessing pipeline."""
     print(f"Loading: {input_path}")
     pcd = o3d.io.read_point_cloud(input_path)
@@ -249,67 +257,89 @@ def preprocess_map(input_path, output_path, visualize=False):
           f"Y[{points[:,1].min():.2f}, {points[:,1].max():.2f}] "
           f"Z[{points[:,2].min():.2f}, {points[:,2].max():.2f}]")
 
-    # Step 1: RANSAC ground plane extraction
-    print("\n[Step 1] RANSAC ground plane extraction...")
-    plane_model, ground_inliers = ransac_ground_plane(pcd)
-    a, b, c, d = plane_model
-    print(f"  Plane: {a:.4f}x + {b:.4f}y + {c:.4f}z + {d:.4f} = 0")
-    print(f"  Ground inliers: {len(ground_inliers)} ({100*len(ground_inliers)/len(points):.1f}%)")
-    print(f"  Normal: ({a:.4f}, {b:.4f}, {c:.4f})")
-
-    # Step 2: Compute gravity alignment rotation
-    print("\n[Step 2] Gravity alignment...")
-    R_gravity = compute_gravity_alignment([a, b, c])
-    angle_deg = np.degrees(np.arccos(np.clip(np.dot([a, b, c] / np.linalg.norm([a, b, c]), [0, 0, 1]), -1, 1)))
-    print(f"  Tilt angle: {angle_deg:.2f} degrees")
-
-    # Apply gravity rotation
-    pcd.rotate(R_gravity, center=(0, 0, 0))
-    points = np.asarray(pcd.points)
-
-    # Step 3: Wall-based XY alignment via normal histogram
-    print("\n[Step 3] Wall direction detection (normal histogram)...")
-    yaw_correction = 0.0
-    dominant_angle = find_wall_direction_from_normals(pcd)
-
-    if dominant_angle is not None:
-        yaw_correction = dominant_angle
-        print(f"  Applying yaw correction: -{np.degrees(yaw_correction):.2f} degrees")
-        R_yaw = compute_yaw_rotation(yaw_correction)
-        pcd.rotate(R_yaw, center=(0, 0, 0))
+    # --- Voxel downsampling (optional, runs first) ---
+    if voxel_size is not None and voxel_size > 0:
+        n_before = len(pcd.points)
+        pcd = pcd.voxel_down_sample(voxel_size)
         points = np.asarray(pcd.points)
+        n_after = len(pcd.points)
+        print(f"\n[Voxel Downsampling] voxel_size={voxel_size:.3f}: "
+              f"{n_before} -> {n_after} points "
+              f"({100 * n_after / max(n_before, 1):.1f}%)")
+
+    yaw_correction = 0.0
+    R_gravity = np.eye(3)
+    ground_center_x = 0.0
+    ground_center_y = 0.0
+    ground_z = 0.0
+
+    if do_align:
+        # Step 1: RANSAC ground plane extraction
+        print("\n[Step 1] RANSAC ground plane extraction...")
+        plane_model, ground_inliers = ransac_ground_plane(pcd)
+        a, b, c, d = plane_model
+        print(f"  Plane: {a:.4f}x + {b:.4f}y + {c:.4f}z + {d:.4f} = 0")
+        print(f"  Ground inliers: {len(ground_inliers)} ({100*len(ground_inliers)/len(points):.1f}%)")
+        print(f"  Normal: ({a:.4f}, {b:.4f}, {c:.4f})")
+
+        # Step 2: Compute gravity alignment rotation
+        print("\n[Step 2] Gravity alignment...")
+        R_gravity = compute_gravity_alignment([a, b, c])
+        angle_deg = np.degrees(np.arccos(np.clip(np.dot([a, b, c] / np.linalg.norm([a, b, c]), [0, 0, 1]), -1, 1)))
+        print(f"  Tilt angle: {angle_deg:.2f} degrees")
+
+        # Apply gravity rotation
+        pcd.rotate(R_gravity, center=(0, 0, 0))
+        points = np.asarray(pcd.points)
+
+        # Step 3: Wall-based XY alignment via normal histogram
+        print("\n[Step 3] Wall direction detection (normal histogram)...")
+        dominant_angle = find_wall_direction_from_normals(pcd)
+
+        if dominant_angle is not None:
+            yaw_correction = dominant_angle
+            print(f"  Applying yaw correction: -{np.degrees(yaw_correction):.2f} degrees")
+            R_yaw = compute_yaw_rotation(yaw_correction)
+            pcd.rotate(R_yaw, center=(0, 0, 0))
+            points = np.asarray(pcd.points)
+        else:
+            print("  Could not determine wall direction, skipping XY alignment")
+
+        # Step 4: Translate origin to ground center
+        print("\n[Step 4] Origin → ground center...")
+        plane_model2, ground_inliers2 = ransac_ground_plane(pcd, distance_threshold=0.1)
+        ground_points = points[ground_inliers2]
+        ground_center_x = np.median(ground_points[:, 0])
+        ground_center_y = np.median(ground_points[:, 1])
+        ground_z = np.median(ground_points[:, 2])
+        print(f"  Ground center: ({ground_center_x:.3f}, {ground_center_y:.3f}, {ground_z:.3f})")
+
+        points[:, 0] -= ground_center_x
+        points[:, 1] -= ground_center_y
+        points[:, 2] -= ground_z
+        pcd.points = o3d.utility.Vector3dVector(points)
     else:
-        print("  Could not determine wall direction, skipping XY alignment")
+        print("\n[Coordinate alignment] SKIPPED")
+        points = np.asarray(pcd.points)
 
-    # Step 4: Translate origin to ground center
-    print("\n[Step 4] Origin → ground center...")
-    # Re-extract ground after rotation to get accurate position
-    plane_model2, ground_inliers2 = ransac_ground_plane(pcd, distance_threshold=0.1)
-    ground_points = points[ground_inliers2]
-    ground_center_x = np.median(ground_points[:, 0])
-    ground_center_y = np.median(ground_points[:, 1])
-    ground_z = np.median(ground_points[:, 2])
-    print(f"  Ground center: ({ground_center_x:.3f}, {ground_center_y:.3f}, {ground_z:.3f})")
-
-    points[:, 0] -= ground_center_x
-    points[:, 1] -= ground_center_y
-    points[:, 2] -= ground_z
-    pcd.points = o3d.utility.Vector3dVector(points)
-
-    # Step 5: Multi-floor ground infill
-    print("\n[Step 5] Ground infill (multi-floor compatible)...")
-    points = np.asarray(pcd.points)
-    infill_points = floor_infill(points, resolution=0.2)
-    if len(infill_points) > 0:
-        print(f"  Added {len(infill_points)} infill points")
-        all_points = np.vstack([points, infill_points])
-        pcd.points = o3d.utility.Vector3dVector(all_points)
+    # --- Ground infill (optional, default OFF) ---
+    if do_infill:
+        print("\n[Step 5] Ground infill (multi-floor compatible)...")
+        points = np.asarray(pcd.points)
+        infill_points = floor_infill(points, resolution=0.2)
+        if len(infill_points) > 0:
+            print(f"  Added {len(infill_points)} infill points")
+            all_points = np.vstack([points, infill_points])
+            pcd.points = o3d.utility.Vector3dVector(all_points)
+        else:
+            print("  No infill needed")
     else:
-        print("  No infill needed")
+        print("\n[Ground infill] SKIPPED")
 
     # Final stats
     points = np.asarray(pcd.points)
     print(f"\n[Result]")
+    print(f"  Points: {len(points)}")
     print(f"  Bounds: X[{points[:,0].min():.2f}, {points[:,0].max():.2f}] "
           f"Y[{points[:,1].min():.2f}, {points[:,1].max():.2f}] "
           f"Z[{points[:,2].min():.2f}, {points[:,2].max():.2f}]")
@@ -351,6 +381,15 @@ if __name__ == '__main__':
     parser.add_argument('input', help='Input PCD file')
     parser.add_argument('output', help='Output PCD file')
     parser.add_argument('--visualize', action='store_true', help='Show Open3D visualization')
+    parser.add_argument('--no-align', action='store_true',
+                        help='Skip coordinate alignment (default: alignment ON)')
+    parser.add_argument('--infill', action='store_true',
+                        help='Enable ground infill (default: OFF)')
+    parser.add_argument('--voxel_size', type=float, default=None,
+                        help='Voxel downsampling grid size in meters (default: disabled)')
     args = parser.parse_args()
 
-    preprocess_map(args.input, args.output, args.visualize)
+    preprocess_map(args.input, args.output, args.visualize,
+                   do_align=not args.no_align,
+                   do_infill=args.infill,
+                   voxel_size=args.voxel_size)

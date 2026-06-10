@@ -1,10 +1,14 @@
 
 #include "pcd2octomap_converter.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <iostream>
+#include <limits>
+#include <unordered_set>
 
 #include <pcl/io/pcd_io.h>
 
@@ -38,6 +42,9 @@ void Pcd2OctomapConverter::configure(const ConverterConfig& config)
   min_points_per_voxel_ = config.min_points_per_voxel;
   min_cluster_voxels_ = config.min_cluster_voxels;
   save_to_file_ = config.save_to_file;
+  enable_ground_infill_ = config.enable_ground_infill;
+  ground_infill_density_threshold_ = config.ground_infill_density_threshold;
+  ground_infill_neighbor_threshold_ = config.ground_infill_neighbor_threshold;
   tree_ = std::make_shared<octomap::OcTree>(resolution_);
 }
 
@@ -53,6 +60,20 @@ bool Pcd2OctomapConverter::convert()
   filterByPointCount();
   filterByConnectedClusters();
   fillOcTree();
+
+  if (enable_ground_infill_) {
+    std::size_t before_count = 0;
+    for (auto it = tree_->begin_leafs(); it != tree_->end_leafs(); ++it) {
+      if (tree_->isNodeOccupied(*it)) ++before_count;
+    }
+    groundInfill();
+    std::size_t after_count = 0;
+    for (auto it = tree_->begin_leafs(); it != tree_->end_leafs(); ++it) {
+      if (tree_->isNodeOccupied(*it)) ++after_count;
+    }
+    std::cout << "Ground infill result: " << before_count << " -> " << after_count
+              << " occupied leaves (+" << (after_count - before_count) << ")" << std::endl;
+  }
 
   if (save_to_file_) {
     if (!saveOctomap()) {
@@ -185,6 +206,110 @@ void Pcd2OctomapConverter::fillOcTree()
   }
 
   tree_->updateInnerOccupancy();
+}
+
+void Pcd2OctomapConverter::groundInfill()
+{
+  if (!tree_) return;
+
+  const double res = tree_->getResolution();
+
+  // Collect all occupied leaf cells into a grid indexed by (ix, iy, iz)
+  struct CellKey { int x, y, z; };
+  struct CellKeyHash {
+    std::size_t operator()(const CellKey& k) const {
+      std::size_t h = std::hash<int>{}(k.x);
+      h ^= std::hash<int>{}(k.y) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(k.z) + 0x9e3779b9 + (h << 6) + (h >> 2);
+      return h;
+    }
+  };
+  struct CellKeyEq {
+    bool operator()(const CellKey& a, const CellKey& b) const {
+      return a.x == b.x && a.y == b.y && a.z == b.z;
+    }
+  };
+
+  // Build 3D occupied set
+  std::unordered_set<CellKey, CellKeyHash, CellKeyEq> occupied;
+  int min_iz = std::numeric_limits<int>::max();
+  int max_iz = std::numeric_limits<int>::min();
+  int min_ix = std::numeric_limits<int>::max(), max_ix = std::numeric_limits<int>::min();
+  int min_iy = std::numeric_limits<int>::max(), max_iy = std::numeric_limits<int>::min();
+
+  for (auto it = tree_->begin_leafs(); it != tree_->end_leafs(); ++it) {
+    if (!tree_->isNodeOccupied(*it)) continue;
+    int ix = static_cast<int>(std::floor(it.getX() / res));
+    int iy = static_cast<int>(std::floor(it.getY() / res));
+    int iz = static_cast<int>(std::floor(it.getZ() / res));
+    occupied.insert({ix, iy, iz});
+    if (iz < min_iz) min_iz = iz;
+    if (iz > max_iz) max_iz = iz;
+    if (ix < min_ix) min_ix = ix;
+    if (ix > max_ix) max_ix = ix;
+    if (iy < min_iy) min_iy = iy;
+    if (iy > max_iy) max_iy = iy;
+  }
+
+  const int nx = max_ix - min_ix + 1;
+  const int ny = max_iy - min_iy + 1;
+  const int total_xy = nx * ny;
+  const int neighbor_thres = ground_infill_neighbor_threshold_;
+  const double density_thres = ground_infill_density_threshold_;
+
+  int total_infill = 0;
+
+  // For each Z layer, check if it's a floor-like layer and fill gaps
+  for (int iz = min_iz; iz <= max_iz; ++iz) {
+    // Count occupied cells in this layer
+    int layer_count = 0;
+    for (int ix = min_ix; ix <= max_ix; ++ix) {
+      for (int iy = min_iy; iy <= max_iy; ++iy) {
+        if (occupied.count({ix, iy, iz})) {
+          ++layer_count;
+        }
+      }
+    }
+
+    double density = static_cast<double>(layer_count) / total_xy;
+    if (density < density_thres) continue;
+
+    // This is a floor-like layer - fill gaps where enough neighbors exist
+    std::vector<CellKey> to_fill;
+    for (int ix = min_ix; ix <= max_ix; ++ix) {
+      for (int iy = min_iy; iy <= max_iy; ++iy) {
+        if (occupied.count({ix, iy, iz})) continue;
+
+        // Count 8-connected neighbors in same Z layer
+        int nbr_count = 0;
+        for (int dx = -1; dx <= 1; ++dx) {
+          for (int dy = -1; dy <= 1; ++dy) {
+            if (dx == 0 && dy == 0) continue;
+            if (occupied.count({ix + dx, iy + dy, iz})) {
+              ++nbr_count;
+            }
+          }
+        }
+
+        if (nbr_count >= neighbor_thres) {
+          to_fill.push_back({ix, iy, iz});
+        }
+      }
+    }
+
+    // Insert infill cells into the OcTree
+    for (const auto& cell : to_fill) {
+      double wx = (static_cast<double>(cell.x) + 0.5) * res;
+      double wy = (static_cast<double>(cell.y) + 0.5) * res;
+      double wz = (static_cast<double>(cell.z) + 0.5) * res;
+      tree_->updateNode(octomap::point3d(wx, wy, wz), true);
+      occupied.insert(cell);
+    }
+    total_infill += static_cast<int>(to_fill.size());
+  }
+
+  tree_->updateInnerOccupancy();
+  std::cout << "Ground infill: added " << total_infill << " voxels" << std::endl;
 }
 
 bool Pcd2OctomapConverter::saveOctomap() const

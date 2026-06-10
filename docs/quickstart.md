@@ -30,17 +30,33 @@ source install/setup.bash
 # 激活 conda 环境
 conda activate dimos
 
-# 运行预处理（RANSAC 地面对齐 + 墙面 XY 校正 + 原点置于地面中心）
-python3 src/octo_planner/scripts/map_preprocessor.py <输入.pcd> maps/building_map.pcd
+# 仅坐标系校正（默认行为：对齐开、补全关、降采样关）
+python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd
 
-# 可选：加 --visualize 查看 Open3D 3D 预览
-python3 src/octo_planner/scripts/map_preprocessor.py <输入.pcd> maps/building_map.pcd --visualize
+# 启用体素降采样（稀疏大场景推荐）
+python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd --voxel_size 0.1
+
+# 完整处理：对齐 + 补全 + 降采样 + 预览
+python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd \
+    --voxel_size 0.1 --infill --visualize
 ```
 
-预处理步骤：
-1. RANSAC 提取地面平面 → 计算重力对齐旋转矩阵
-2. 估计法向量 → 统计水平法线方向直方图 → 找出主墙面方向 → 旋转 XY 轴与墙面平行
-3. 平移坐标系：地面中心点设为原点 (0, 0, 0)
+### CLI 选项
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `--visualize` | 关 | Open3D 3D 预览 |
+| `--no-align` | 关（对齐开） | 跳过坐标系校正 |
+| `--infill` | 关 | 多楼层地面空洞补全 |
+| `--voxel_size N` | 禁用 | 体素降采样网格大小 (m) |
+
+### 处理步骤
+
+1. **体素降采样**（可选）— Open3D `voxel_down_sample` 降低点数
+2. RANSAC 提取地面平面 → 计算重力对齐旋转矩阵
+3. 估计法向量 → 统计水平法线方向直方图 → 找出主墙面方向 → 旋转 XY 轴与墙面平行
+4. 平移坐标系：地面中心点设为原点 (0, 0, 0)
+5. **地面补全**（可选）— 检测楼层 Z 层 → 填补 XY 空洞
 
 ## 启动系统
 

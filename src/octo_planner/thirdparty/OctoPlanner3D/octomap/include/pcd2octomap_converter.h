@@ -46,6 +46,9 @@ struct ConverterConfig
   int min_points_per_voxel = 3;
   int min_cluster_voxels = 4;
   bool save_to_file = true;
+  bool enable_ground_infill = true;
+  double ground_infill_density_threshold = 0.10;
+  int ground_infill_neighbor_threshold = 3;
 };
 
 class Pcd2OctomapConverter
@@ -79,6 +82,7 @@ private:
   void filterByPointCount();
   void filterByConnectedClusters();
   void fillOcTree();
+  void groundInfill();
   bool saveOctomap() const;
 
 private:
@@ -89,6 +93,9 @@ private:
   int min_points_per_voxel_ = 3;
   int min_cluster_voxels_ = 4;
   bool save_to_file_ = true;
+  bool enable_ground_infill_ = true;
+  double ground_infill_density_threshold_ = 0.10;
+  int ground_infill_neighbor_threshold_ = 3;
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_;
   std::shared_ptr<octomap::OcTree> tree_;

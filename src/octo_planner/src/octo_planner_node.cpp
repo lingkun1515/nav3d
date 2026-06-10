@@ -44,6 +44,8 @@ private:
     declare_parameter("resolution", 0.2);
     declare_parameter("min_points_per_voxel", 3);
     declare_parameter("min_cluster_voxels", 4);
+    declare_parameter("enable_ground_infill", true);
+    declare_parameter("ground_infill_neighbor_threshold", 3);
     declare_parameter("robot_radius", 0.25);
     declare_parameter("max_iterations", 500000);
     declare_parameter("snap_search_radius_cells", 8);
@@ -107,6 +109,8 @@ private:
     conv_cfg.min_points_per_voxel = get_parameter("min_points_per_voxel").as_int();
     conv_cfg.min_cluster_voxels = get_parameter("min_cluster_voxels").as_int();
     conv_cfg.save_to_file = false;
+    conv_cfg.enable_ground_infill = get_parameter("enable_ground_infill").as_bool();
+    conv_cfg.ground_infill_neighbor_threshold = get_parameter("ground_infill_neighbor_threshold").as_int();
 
     converter_ = std::make_unique<pcd2octomap::Pcd2OctomapConverter>();
     converter_->configure(conv_cfg);
