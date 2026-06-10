@@ -16,6 +16,7 @@ import argparse
 import sys
 import numpy as np
 import open3d as o3d
+from scipy import ndimage
 
 
 def ransac_ground_plane(pcd, distance_threshold=0.15, num_iterations=2000):
@@ -135,6 +136,109 @@ def compute_yaw_rotation(yaw_angle):
     return R
 
 
+def floor_infill(points, resolution=0.2, min_floor_density=0.15, neighbor_threshold=3):
+    """
+    Detect floor layers and fill XY gaps via morphological closing.
+    Compatible with multi-story buildings.
+
+    Algorithm:
+      1. Discretize all points into Z slices (1 voxel thick)
+      2. For each Z slice, compute XY occupancy grid
+      3. If a slice has high XY density (floor-like), apply morphological closing
+      4. New occupied cells become infill points
+
+    Args:
+        points: Nx3 numpy array
+        resolution: voxel size (meters)
+        min_floor_density: minimum ratio of occupied cells to consider a layer as floor
+        neighbor_threshold: minimum occupied neighbors (out of 8) to fill a gap cell
+
+    Returns:
+        infill_points: Mx3 numpy array of new points to add
+    """
+    if len(points) == 0:
+        return np.empty((0, 3))
+
+    res = resolution
+    # Discretize to grid indices
+    ix = np.floor(points[:, 0] / res).astype(np.int32)
+    iy = np.floor(points[:, 1] / res).astype(np.int32)
+    iz = np.floor(points[:, 2] / res).astype(np.int32)
+
+    ix_min, ix_max = ix.min(), ix.max()
+    iy_min, iy_max = iy.min(), iy.max()
+    iz_min, iz_max = iz.min(), iz.max()
+
+    nx = ix_max - ix_min + 1
+    ny = iy_max - iy_min + 1
+
+    # Shift to 0-based
+    ix_shifted = ix - ix_min
+    iy_shifted = iy - iy_min
+    iz_shifted = iz - iz_min
+
+    # Group points by Z layer
+    z_layers = {}
+    for i in range(len(points)):
+        zk = iz_shifted[i]
+        if zk not in z_layers:
+            z_layers[zk] = []
+        z_layers[zk].append((ix_shifted[i], iy_shifted[i]))
+
+    infill_list = []
+    floors_found = 0
+
+    for zk, cells in z_layers.items():
+        # Build 2D occupancy grid for this Z layer
+        grid = np.zeros((nx, ny), dtype=np.uint8)
+        for (cx, cy) in cells:
+            grid[cx, cy] = 1
+
+        # Check if this is a floor-like layer
+        occupied_count = grid.sum()
+        total_possible = nx * ny
+        density = occupied_count / total_possible
+
+        if density < min_floor_density:
+            continue
+
+        floors_found += 1
+
+        # Morphological closing: dilate then erode to fill small gaps
+        # Use a 3x3 structuring element
+        struct = ndimage.generate_binary_structure(2, 2)  # 8-connectivity
+        closed = ndimage.binary_closing(grid, structure=struct, iterations=2)
+
+        # Also: fill cells that have >= neighbor_threshold occupied neighbors
+        # Count neighbors for each empty cell
+        neighbor_count = ndimage.convolve(grid.astype(np.int32),
+                                          np.ones((3, 3), dtype=np.int32),
+                                          mode='constant', cval=0)
+        # Fill where enough neighbors exist (excluding already-occupied)
+        fill_by_neighbors = (neighbor_count >= neighbor_threshold) & (grid == 0)
+
+        # Combine both methods
+        new_cells = (closed | fill_by_neighbors) & (grid == 0)
+
+        # Convert new cells back to world coordinates
+        new_ix, new_iy = np.where(new_cells)
+        if len(new_ix) == 0:
+            continue
+
+        world_x = (new_ix + ix_min + 0.5) * res
+        world_y = (new_iy + iy_min + 0.5) * res
+        world_z = np.full(len(new_ix), (zk + iz_min + 0.5) * res)
+
+        infill_list.append(np.column_stack([world_x, world_y, world_z]))
+
+    if floors_found > 0:
+        print(f"    Detected {floors_found} floor-like layers")
+
+    if infill_list:
+        return np.vstack(infill_list)
+    return np.empty((0, 3))
+
+
 def preprocess_map(input_path, output_path, visualize=False):
     """Full preprocessing pipeline."""
     print(f"Loading: {input_path}")
@@ -191,6 +295,17 @@ def preprocess_map(input_path, output_path, visualize=False):
     points[:, 1] -= ground_center_y
     points[:, 2] -= ground_z
     pcd.points = o3d.utility.Vector3dVector(points)
+
+    # Step 5: Multi-floor ground infill
+    print("\n[Step 5] Ground infill (multi-floor compatible)...")
+    points = np.asarray(pcd.points)
+    infill_points = floor_infill(points, resolution=0.2)
+    if len(infill_points) > 0:
+        print(f"  Added {len(infill_points)} infill points")
+        all_points = np.vstack([points, infill_points])
+        pcd.points = o3d.utility.Vector3dVector(all_points)
+    else:
+        print("  No infill needed")
 
     # Final stats
     points = np.asarray(pcd.points)
