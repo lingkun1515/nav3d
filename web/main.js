@@ -183,16 +183,18 @@ function makeVoxelLayer(points, color, opacity = 1.0) {
   return { group, pickMesh: fillMesh };
 }
 
-// Accumulate chunked markers: collect all chunks within a time window then render
+// Map data: collect all chunks, render once, then ignore further updates
 let occupiedPointsBuf = [];
 let traversablePointsBuf = [];
 let preblockedPointsBuf = [];
 let occupiedRenderTimer = null;
 let traversableRenderTimer = null;
 let preblockedRenderTimer = null;
-const CHUNK_COLLECT_MS = 500;
+let mapLoaded = { occupied: false, traversable: false, preblocked: false, risk: false };
+const CHUNK_COLLECT_MS = 800;
 
 function setOccupiedMarker(msg) {
+  if (mapLoaded.occupied) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) occupiedPointsBuf = [];
   occupiedPointsBuf.push(...msg.points);
@@ -202,11 +204,14 @@ function setOccupiedMarker(msg) {
     const { group } = makeVoxelLayer(occupiedPointsBuf, 0xf6c85d, 0.95);
     occupiedGroup.add(group);
     mapStatus.textContent = `${occupiedPointsBuf.length} 体素`;
+    mapLoaded.occupied = true;
+    autoFrameCamera();
     occupiedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
 
 function setTraversableMarker(msg) {
+  if (mapLoaded.traversable) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) traversablePointsBuf = [];
   traversablePointsBuf.push(...msg.points);
@@ -216,11 +221,13 @@ function setTraversableMarker(msg) {
     const { group, pickMesh } = makeVoxelLayer(traversablePointsBuf, 0x58ef74, 0.22);
     traversableGroup.add(group);
     traversablePickMesh = pickMesh;
+    mapLoaded.traversable = true;
     traversableRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
 
 function setPreblockedMarker(msg) {
+  if (mapLoaded.preblocked) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) preblockedPointsBuf = [];
   preblockedPointsBuf.push(...msg.points);
@@ -229,14 +236,36 @@ function setPreblockedMarker(msg) {
     clearGroup(preblockedGroup);
     const { group } = makeVoxelLayer(preblockedPointsBuf, 0x4d83ff, 0.92);
     preblockedGroup.add(group);
+    mapLoaded.preblocked = true;
     preblockedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
 
+function autoFrameCamera() {
+  if (occupiedPointsBuf.length === 0) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const p of occupiedPointsBuf) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const span = Math.max(maxX - minX, maxY - minY);
+  const dist = span * 0.8;
+  camera.position.set(cx + dist * 0.5, cy - dist * 0.5, maxZ + dist * 0.6);
+  controls.target.set(cx, cy, 0);
+  controls.update();
+}
+
 function setRiskCostCloud(msg) {
+  if (mapLoaded.risk) return;
   clearGroup(riskGroup);
   const points = parsePointCloud2(msg);
   if (!points || points.length === 0) return;
+  mapLoaded.risk = true;
 
   const size = voxelSize;
   const geo = new THREE.BoxGeometry(size, size, size);
@@ -455,31 +484,37 @@ function onCanvasPointerUp(event) {
     hasStart = true;
     publishStartPoint(origin);
     pickStatus.textContent = `起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)})`;
-    addPointMarker(origin, 0x66bb6a);
+    setMarker('start', origin, 0x66bb6a);
   } else if (placementMode === 'goal' || placementMode === 'navigate') {
     goalPoint = { x: origin.x, y: origin.y, z: origin.z };
     hasGoal = true;
     publishGoalPose(origin, yaw);
     pickStatus.textContent = `终点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)})`;
-    addPointMarker(origin, 0xef5350);
+    setMarker('goal', origin, 0xef5350);
   }
 
+  // Exit placement mode after selection
+  setActivePlacementBtn(null);
   dragStart = null;
 }
 
-function addPointMarker(point, color) {
-  const geo = new THREE.SphereGeometry(0.12, 16, 16);
-  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+const namedMarkers = {};
+
+function setMarker(name, point, color) {
+  // Remove old marker with same name
+  if (namedMarkers[name]) {
+    markersGroup.remove(namedMarkers[name]);
+    namedMarkers[name].geometry.dispose();
+    namedMarkers[name].material.dispose();
+  }
+
+  const geo = new THREE.SphereGeometry(0.15, 16, 16);
+  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
   const sphere = new THREE.Mesh(geo, mat);
   sphere.position.set(point.x, point.y, point.z);
-
-  if (markersGroup.children.length > 4) {
-    const old = markersGroup.children[0];
-    markersGroup.remove(old);
-    old.geometry.dispose();
-    old.material.dispose();
-  }
+  sphere.name = name;
   markersGroup.add(sphere);
+  namedMarkers[name] = sphere;
 }
 
 // ===== ROS Publishing =====
