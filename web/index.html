@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <title>Dog3DNav Web Console</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./vendor/roslib.min.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="panel">
+      <h1 class="logo">Dog3DNav</h1>
+
+      <div class="layer-toggles">
+        <label><input id="toggle-occupied" type="checkbox" checked /> 占据</label>
+        <label><input id="toggle-traversable" type="checkbox" /> 可通行</label>
+        <label><input id="toggle-preblocked" type="checkbox" /> 禁行</label>
+        <label><input id="toggle-risk" type="checkbox" /> 代价</label>
+      </div>
+
+      <button id="reset-view-btn" type="button" class="btn secondary">重置视角</button>
+
+      <div class="panel-section">
+        <div id="robot-status" class="status-indicator offline">机器人未定位</div>
+        <button id="set-start-btn" type="button" class="btn action">设置起点</button>
+        <button id="set-goal-btn" type="button" class="btn action">设置终点</button>
+        <button id="navigate-btn" type="button" class="btn primary">导航目标</button>
+      </div>
+
+      <button id="stop-nav-btn" type="button" class="btn danger">停止导航</button>
+
+      <div class="joystick-card">
+        <div class="joystick-title">手动控制</div>
+        <div id="joystick-pad" class="joystick-pad">
+          <div class="joystick-cross h"></div>
+          <div class="joystick-cross v"></div>
+          <div id="joystick-knob" class="joystick-knob"></div>
+        </div>
+        <div class="rotation-row">
+          <label for="rotation-slider">旋转</label>
+          <input id="rotation-slider" type="range" min="-100" max="100" value="0" />
+        </div>
+        <div id="vel-display" class="vel-display">x=0.00 y=0.00 wz=0.00</div>
+      </div>
+
+      <details class="advanced">
+        <summary>连接设置</summary>
+        <label class="field">
+          <span>ROSBridge 地址</span>
+          <input id="ws-url" type="text" value="" />
+        </label>
+        <button id="connect-btn" type="button" class="btn secondary">连接</button>
+      </details>
+
+      <div class="status-block">
+        <div><strong>连接：</strong><span id="conn-status">未连接</span></div>
+        <div><strong>机器人TF：</strong><span id="tf-status">-</span></div>
+        <div><strong>地图：</strong><span id="map-status">等待数据</span></div>
+        <div><strong>选点：</strong><span id="pick-status">-</span></div>
+      </div>
+    </aside>
+
+    <main class="viewport-wrap">
+      <canvas id="viewport"></canvas>
+    </main>
+  </div>
+
+  <div id="nav-confirm-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2>路径规划完成</h2>
+      <p id="nav-confirm-msg"></p>
+      <div class="modal-actions">
+        <button id="nav-confirm-go" type="button" class="btn primary">开始导航</button>
+        <button id="nav-confirm-cancel" type="button" class="btn secondary">仅显示路线</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
