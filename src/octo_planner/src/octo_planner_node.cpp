@@ -92,7 +92,7 @@ private:
     double period = get_parameter("octomap_publish_period_s").as_double();
     republish_timer_ = create_wall_timer(
       std::chrono::duration<double>(period),
-      [this]() { republish_octomap(); });
+      [this]() { republish_all(); });
   }
 
   void load_map(const std::string & pcd_file)
@@ -244,11 +244,14 @@ private:
     octomap_pub_->publish(msg);
   }
 
-  void republish_octomap()
+  void republish_all()
   {
-    if (map_ready_) {
-      publish_octomap();
-    }
+    if (!map_ready_) return;
+    publish_octomap();
+    publish_occupied_markers();
+    publish_traversable_markers();
+    publish_preblocked_markers();
+    publish_risk_cost_cloud();
   }
 
   void publish_occupied_markers()
@@ -284,7 +287,6 @@ private:
     }
 
     occupied_marker_pub_->publish(marker);
-    RCLCPP_INFO(get_logger(), "Published %zu occupied voxels.", marker.points.size());
   }
 
   void publish_traversable_markers()
@@ -322,7 +324,6 @@ private:
     }
 
     traversable_marker_pub_->publish(marker);
-    RCLCPP_INFO(get_logger(), "Published %zu traversable cells.", cells.size());
   }
 
   void publish_preblocked_markers()
@@ -360,7 +361,6 @@ private:
     }
 
     preblocked_marker_pub_->publish(marker);
-    RCLCPP_INFO(get_logger(), "Published %zu preblocked cells.", cells.size());
   }
 
   void publish_risk_cost_cloud()
@@ -402,7 +402,6 @@ private:
     }
 
     risk_cost_pub_->publish(cloud);
-    RCLCPP_INFO(get_logger(), "Published %zu risk cost cells.", costmap.size());
   }
 
   // Members

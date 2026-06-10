@@ -23,4 +23,4 @@ octo_planner_node:
     lowest_traversable_only: false
 
     # Publishing
-    octomap_publish_period_s: 1.0
+    octomap_publish_period_s: 5.0
