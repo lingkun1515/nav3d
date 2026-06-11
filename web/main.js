@@ -574,6 +574,11 @@ function onCanvasPointerUp(event) {
   } else if (placementMode === 'goal' || placementMode === 'navigate') {
     goalPoint = { x: origin.x, y: origin.y, z: origin.z };
     hasGoal = true;
+    // Auto-publish start from robot pose if not manually set
+    if (!hasStart && startPoint) {
+      publishStartPoint(startPoint);
+      log(`自动起点(里程计): (${startPoint.x.toFixed(2)}, ${startPoint.y.toFixed(2)}, ${startPoint.z.toFixed(2)})`, 'info');
+    }
     publishGoalPose(origin, yaw);
     const yawDeg = (yaw * 180 / Math.PI).toFixed(1);
     pickStatus.textContent = `终点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}) yaw=${yawDeg}°`;
