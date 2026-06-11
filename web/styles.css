@@ -113,3 +113,19 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 
 /* --- Pick status overlay --- */
 #pick-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- Log Panel --- */
+.log-panel { font-size: 0.7rem; margin-top: 4px; }
+.log-panel summary { cursor: pointer; color: var(--text-muted); user-select: none; }
+#log-list {
+  max-height: 400px; overflow-y: auto; margin-top: 4px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.68rem; line-height: 1.5;
+  display: flex; flex-direction: column;
+}
+.log-entry { padding: 2px 4px; border-bottom: 1px solid #1a2a3e; white-space: nowrap; }
+.log-entry .ts { color: #5a6a7e; margin-right: 6px; }
+.log-entry.info { color: #b0bec5; }
+.log-entry.ok   { color: #81c784; }
+.log-entry.warn { color: #ffb74d; }
+.log-entry.err  { color: #ef9a9a; }

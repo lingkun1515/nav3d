@@ -246,8 +246,49 @@ def floor_infill(points, resolution=0.2, min_floor_density=0.15, neighbor_thresh
     return np.empty((0, 3))
 
 
+def voxel_down_sample_with_min_points(pcd, voxel_size, min_points=1):
+    """
+    Custom voxel downsampling that discards voxels with fewer than min_points.
+
+    Args:
+        pcd: Open3D PointCloud
+        voxel_size: voxel grid size (m)
+        min_points: keep only voxels with >= this many points (default 1 = all)
+
+    Returns:
+        filtered Open3D PointCloud
+    """
+    points = np.asarray(pcd.points)
+    if len(points) == 0:
+        return pcd
+
+    res = voxel_size
+    ix = np.floor(points[:, 0] / res).astype(np.int64)
+    iy = np.floor(points[:, 1] / res).astype(np.int64)
+    iz = np.floor(points[:, 2] / res).astype(np.int64)
+
+    # Group points by voxel index
+    from collections import defaultdict
+    voxels = defaultdict(list)
+    for i in range(len(points)):
+        voxels[(ix[i], iy[i], iz[i])].append(i)
+
+    # Only keep voxels with enough points, output centroid
+    out_points = []
+    for voxel_idx, pt_indices in voxels.items():
+        if len(pt_indices) < min_points:
+            continue
+        centroid = points[pt_indices].mean(axis=0)
+        out_points.append(centroid)
+
+    out_pcd = o3d.geometry.PointCloud()
+    out_pcd.points = o3d.utility.Vector3dVector(np.array(out_points))
+    return out_pcd
+
+
 def preprocess_map(input_path, output_path, visualize=False,
-                   do_align=True, do_infill=False, voxel_size=None):
+                   do_align=True, do_infill=False, voxel_size=None,
+                   voxel_min_points=1):
     """Full preprocessing pipeline."""
     print(f"Loading: {input_path}")
     pcd = o3d.io.read_point_cloud(input_path)
@@ -260,10 +301,10 @@ def preprocess_map(input_path, output_path, visualize=False,
     # --- Voxel downsampling (optional, runs first) ---
     if voxel_size is not None and voxel_size > 0:
         n_before = len(pcd.points)
-        pcd = pcd.voxel_down_sample(voxel_size)
+        pcd = voxel_down_sample_with_min_points(pcd, voxel_size, voxel_min_points)
         points = np.asarray(pcd.points)
         n_after = len(pcd.points)
-        print(f"\n[Voxel Downsampling] voxel_size={voxel_size:.3f}: "
+        print(f"\n[Voxel Downsampling] voxel_size={voxel_size:.3f}, min_points={voxel_min_points}: "
               f"{n_before} -> {n_after} points "
               f"({100 * n_after / max(n_before, 1):.1f}%)")
 
@@ -387,9 +428,12 @@ if __name__ == '__main__':
                         help='Enable ground infill (default: OFF)')
     parser.add_argument('--voxel_size', type=float, default=None,
                         help='Voxel downsampling grid size in meters (default: disabled)')
+    parser.add_argument('--voxel_min_points', type=int, default=10,
+                        help='Min points per voxel; voxels below this are discarded (default: 1)')
     args = parser.parse_args()
 
     preprocess_map(args.input, args.output, args.visualize,
                    do_align=not args.no_align,
                    do_infill=args.infill,
-                   voxel_size=args.voxel_size)
+                   voxel_size=args.voxel_size,
+                   voxel_min_points=args.voxel_min_points)

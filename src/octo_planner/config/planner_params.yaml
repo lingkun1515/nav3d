@@ -12,8 +12,25 @@ octo_planner_node:
     ground_infill_neighbor_threshold: 3
     ground_infill_density_threshold: 0.02
 
+    # Radical infill: bridge disconnected traversable regions
+    radical_infill_enabled: true
+    radical_infill_radius_m: 1.0
+    radical_infill_clearance_m: 1.0
+    radical_infill_half_height_m: 0.1
+
+    # Preblocked cells as hard obstacles: when false, preblocked only affects
+    # costmap (soft penalty), narrow gaps between small obstacles become traversable
+    preblocked_hard_obstacle: true
+
+    # Flatten noisy traversable surface via median filter on the 2D height map.
+    # Only adjusts cells whose Z differs from the local median by <= max_delta.
+    # Stairs/ramps (Z change > max_delta) are preserved.
+    flatten_enabled: true
+    flatten_window_cells: 5
+    flatten_max_delta_cells: 1
+
     # Planner parameters
-    robot_radius: 0.0
+    robot_radius: 0.05
     max_iterations: 500000
     snap_search_radius_cells: 8
     require_ground_support: true
@@ -24,12 +41,6 @@ octo_planner_node:
     preblocked_costmap_radius_cells: 3
     preblocked_costmap_weight: 2.5
     lowest_traversable_only: false
-
-    # Radical infill: bridge disconnected traversable regions
-    radical_infill_enabled: true
-    radical_infill_radius_m: 1.0
-    radical_infill_clearance_m: 1.0
-    radical_infill_half_height_m: 0.1
 
     # Publishing
     auto_publish_enabled: false

@@ -12,6 +12,26 @@ const velDisplay = document.getElementById('vel-display');
 const wsUrlInput = document.getElementById('ws-url');
 const navModal = document.getElementById('nav-confirm-modal');
 const navConfirmMsg = document.getElementById('nav-confirm-msg');
+const logList = document.getElementById('log-list');
+const logCount = document.getElementById('log-count');
+
+// ===== Event Log =====
+const MAX_LOG = 200;
+let logEntries = 0;
+
+function log(msg, level = 'info') {
+  logEntries++;
+  const now = new Date();
+  const ts = now.toLocaleTimeString('zh-CN', { hour12: false });
+  const el = document.createElement('div');
+  el.className = `log-entry ${level}`;
+  el.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  logList.insertBefore(el, logList.firstChild);
+  logCount.textContent = `(${logEntries})`;
+  while (logList.children.length > MAX_LOG) {
+    logList.removeChild(logList.lastChild);
+  }
+}
 
 // ===== Three.js Setup =====
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -84,6 +104,7 @@ let goalPoseTopic = null;
 let startNavTopic = null;
 let stopNavTopic = null;
 let cmdVelTopic = null;
+let requestMapService = null;
 
 // Joystick state
 let joystickActive = false;
@@ -201,10 +222,11 @@ function setOccupiedMarker(msg) {
   if (occupiedRenderTimer) clearTimeout(occupiedRenderTimer);
   occupiedRenderTimer = setTimeout(() => {
     clearGroup(occupiedGroup);
-    const { group } = makeVoxelLayer(occupiedPointsBuf, 0xf6c85d, 0.95);
+    const { group } = makeVoxelLayer(occupiedPointsBuf, 0xff7043, 0.92);
     occupiedGroup.add(group);
-    mapStatus.textContent = `${occupiedPointsBuf.length} 体素`;
     mapLoaded.occupied = true;
+    log(`占据层: ${occupiedPointsBuf.length} 体素`, 'info');
+    updateMapProgress();
     autoFrameCamera();
     occupiedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
@@ -218,10 +240,12 @@ function setTraversableMarker(msg) {
   if (traversableRenderTimer) clearTimeout(traversableRenderTimer);
   traversableRenderTimer = setTimeout(() => {
     clearGroup(traversableGroup);
-    const { group, pickMesh } = makeVoxelLayer(traversablePointsBuf, 0x58ef74, 0.22);
+    const { group, pickMesh } = makeVoxelLayer(traversablePointsBuf, 0x00e676, 0.28);
     traversableGroup.add(group);
     traversablePickMesh = pickMesh;
     mapLoaded.traversable = true;
+    log(`可通行层: ${traversablePointsBuf.length} 体素`, 'info');
+    updateMapProgress();
     traversableRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
@@ -234,9 +258,11 @@ function setPreblockedMarker(msg) {
   if (preblockedRenderTimer) clearTimeout(preblockedRenderTimer);
   preblockedRenderTimer = setTimeout(() => {
     clearGroup(preblockedGroup);
-    const { group } = makeVoxelLayer(preblockedPointsBuf, 0x4d83ff, 0.92);
+    const { group } = makeVoxelLayer(preblockedPointsBuf, 0xb388ff, 0.90);
     preblockedGroup.add(group);
     mapLoaded.preblocked = true;
+    log(`禁行层: ${preblockedPointsBuf.length} 体素`, 'info');
+    updateMapProgress();
     preblockedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
@@ -272,13 +298,15 @@ function setRiskCostCloud(msg) {
 
   for (const p of points) {
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x42a5f5, transparent: true, opacity: Math.min(0.9, p.intensity * 0.8 + 0.1),
+      color: 0xffd740, transparent: true, opacity: Math.min(0.9, p.intensity * 0.8 + 0.1),
       roughness: 0.5
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(p.x, p.y, p.z);
     riskGroup.add(mesh);
   }
+  log(`代价层: ${points.length} 点`, 'info');
+  updateMapProgress();
 }
 
 function parsePointCloud2(msg) {
@@ -335,9 +363,11 @@ function setPlannedPath(msg) {
   }
 
   pickStatus.textContent = `路径: ${msg.poses.length} 点`;
+  log(`规划路径: ${msg.poses.length} 个航点, 长度 ${(pts.length > 1 ? curve.getLength().toFixed(1) : '0')} m`, 'ok');
 }
 
 // ===== TF System =====
+let tfFirstReceived = false;
 function normalizeFrame(f) { return f.startsWith('/') ? f.slice(1) : f; }
 
 function storeTransform(msg) {
@@ -346,6 +376,10 @@ function storeTransform(msg) {
     const parent = normalizeFrame(t.header.frame_id);
     const child = normalizeFrame(t.child_frame_id);
     tfState.set(`${parent}->${child}`, t.transform);
+  }
+  if (!tfFirstReceived) {
+    tfFirstReceived = true;
+    log('TF 坐标树已接收', 'ok');
   }
 }
 
@@ -390,6 +424,8 @@ function resolveRobotPose() {
   return null;
 }
 
+let poseFirstReceived = false;
+
 function updateRobotModel() {
   const pose = resolveRobotPose();
   if (!pose) {
@@ -406,6 +442,10 @@ function updateRobotModel() {
   robotStatus.className = 'status-indicator online';
   robotStatus.textContent = '已定位';
   tfStatus.textContent = `(${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)})`;
+  if (!poseFirstReceived) {
+    poseFirstReceived = true;
+    log(`机器人已定位: (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)})`, 'ok');
+  }
 
   // Auto-set start from robot pose if not manually set
   if (!hasStart) {
@@ -664,17 +704,22 @@ function connectRos() {
   ros.on('connection', () => {
     connStatus.textContent = '已连接';
     connStatus.style.color = '#66bb6a';
+    log('已连接 ROSBridge @ ' + url, 'ok');
     setupTopics();
   });
 
   ros.on('error', () => {
     connStatus.textContent = '连接错误';
     connStatus.style.color = '#ef5350';
+    log('ROSBridge 连接错误', 'err');
   });
 
   ros.on('close', () => {
     connStatus.textContent = '已断开';
     connStatus.style.color = '#ef5350';
+    tfFirstReceived = false;
+    poseFirstReceived = false;
+    log('ROSBridge 连接断开', 'warn');
     scheduleReconnect();
   });
 }
@@ -711,6 +756,62 @@ function setupTopics() {
     .subscribe(storeTransform);
   new ROSLIB.Topic({ ros, name: '/tf_static', messageType: 'tf2_msgs/TFMessage' })
     .subscribe(storeTransform);
+
+  // Service for manual map fetch
+  requestMapService = new ROSLIB.Service({ ros, name: '/request_map', serviceType: 'std_srvs/Trigger' });
+
+  // Auto-fetch map data on connect (with small delay for rosbridge to wire subscriptions)
+  setTimeout(() => {
+    requestMap();
+  }, 500);
+}
+
+function updateMapProgress() {
+  const parts = [];
+  if (mapLoaded.occupied) parts.push(`占据 ${occupiedPointsBuf.length}`);
+  if (mapLoaded.traversable) parts.push(`可通行 ${traversablePointsBuf.length}`);
+  if (mapLoaded.preblocked) parts.push(`禁行 ${preblockedPointsBuf.length}`);
+  if (mapLoaded.risk) parts.push('代价 ✓');
+  if (parts.length === 0) {
+    mapStatus.textContent = '等待数据...';
+  } else if (mapLoaded.occupied && mapLoaded.traversable && mapLoaded.preblocked && mapLoaded.risk) {
+    mapStatus.textContent = '获取完成: ' + parts.join(', ');
+    log('地图数据全部接收完成', 'ok');
+  } else {
+    mapStatus.textContent = '接收中: ' + parts.join(', ');
+  }
+}
+
+function requestMap() {
+  if (!requestMapService) return;
+  resetMapData();
+  mapStatus.textContent = '请求地图...';
+  log('请求地图数据...', 'info');
+  requestMapService.callService({}, (resp) => {
+    if (!resp.success) {
+      mapStatus.textContent = '获取失败: ' + resp.message;
+      log('地图获取失败: ' + resp.message, 'err');
+    }
+  });
+}
+
+function resetMapData() {
+  if (occupiedRenderTimer) { clearTimeout(occupiedRenderTimer); occupiedRenderTimer = null; }
+  if (traversableRenderTimer) { clearTimeout(traversableRenderTimer); traversableRenderTimer = null; }
+  if (preblockedRenderTimer) { clearTimeout(preblockedRenderTimer); preblockedRenderTimer = null; }
+  occupiedPointsBuf = [];
+  traversablePointsBuf = [];
+  preblockedPointsBuf = [];
+  mapLoaded.occupied = false;
+  mapLoaded.traversable = false;
+  mapLoaded.preblocked = false;
+  mapLoaded.risk = false;
+  clearGroup(occupiedGroup);
+  clearGroup(traversableGroup);
+  clearGroup(preblockedGroup);
+  clearGroup(riskGroup);
+  if (traversablePickMesh) { traversablePickMesh = null; }
+  log('已清空地图缓存', 'info');
 }
 
 // ===== Layer Visibility =====
@@ -720,8 +821,7 @@ document.getElementById('toggle-preblocked').addEventListener('change', e => { p
 document.getElementById('toggle-risk').addEventListener('change', e => { riskGroup.visible = e.target.checked; });
 
 // Initial visibility
-traversableGroup.visible = false;
-preblockedGroup.visible = false;
+occupiedGroup.visible = false;
 riskGroup.visible = false;
 
 // ===== Button Event Wiring =====
@@ -749,7 +849,11 @@ document.getElementById('reset-view-btn').addEventListener('click', () => {
   controls.update();
 });
 
-document.getElementById('connect-btn').addEventListener('click', () => connectRos());
+document.getElementById('connect-btn').addEventListener('click', () => {
+  log('手动连接...', 'info');
+  connectRos();
+});
+document.getElementById('fetch-map-btn').addEventListener('click', () => requestMap());
 
 // Navigation modal
 document.getElementById('nav-confirm-go').addEventListener('click', () => {

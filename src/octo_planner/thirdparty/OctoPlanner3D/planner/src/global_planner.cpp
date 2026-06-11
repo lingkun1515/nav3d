@@ -1,5 +1,9 @@
 #include "global_planner.h"
 
+#include <algorithm>
+#include <map>
+#include <utility>
+
 namespace global_planner
 {
 
@@ -30,6 +34,10 @@ namespace global_planner
         radical_infill_radius_m_ = config.radical_infill_radius_m;
         radical_infill_clearance_m_ = config.radical_infill_clearance_m;
         radical_infill_half_height_m_ = config.radical_infill_half_height_m;
+        preblocked_hard_obstacle_ = config.preblocked_hard_obstacle;
+        flatten_enabled_ = config.flatten_enabled;
+        flatten_window_cells_ = config.flatten_window_cells;
+        flatten_max_delta_cells_ = config.flatten_max_delta_cells;
     }
 
     const std::unordered_set<GridIndex, GridIndexHash>& GlobalPlanner::getTraversableCells() const
@@ -78,6 +86,9 @@ namespace global_planner
         rebuildDerivedLayers();
         if (radical_infill_enabled_) {
           radicalInfill();
+        }
+        if (flatten_enabled_) {
+          flattenTraversable();
         }
         rebuildPreblockedCostmap();
     }
@@ -344,13 +355,15 @@ namespace global_planner
         return false;
         }
 
+        if (preblocked_hard_obstacle_) {
         for (int z = idx.z - 1; z >= 0; --z) {
-        const GridIndex below_idx{idx.x, idx.y, z};
-        if (isOccupiedCell(below_idx)) {
+            const GridIndex below_idx{idx.x, idx.y, z};
+            if (isOccupiedCell(below_idx)) {
             break;
-        }
-        if (preblocked_cells_.find(below_idx) != preblocked_cells_.end()) {
+            }
+            if (preblocked_cells_.find(below_idx) != preblocked_cells_.end()) {
             return false;
+            }
         }
         }
 
@@ -359,10 +372,6 @@ namespace global_planner
         const int n = std::max(1, static_cast<int>(std::ceil(robot_radius / r)));
         const double radius_sq = robot_radius * robot_radius;
 
-        // Collision check for vehicle body volume (same height and above),
-        // while allowing occupied support cells below. Apply the same footprint
-        // rule to preblocked cells so a cell is rejected if the vehicle radius
-        // overlaps any preblocked voxel.
         for (int dx = -n; dx <= n; ++dx) {
         for (int dy = -n; dy <= n; ++dy) {
             for (int dz = 0; dz <= n; ++dz) {
@@ -378,7 +387,8 @@ namespace global_planner
                 center.y() + static_cast<float>(dy * r),
                 center.z() + static_cast<float>(dz * r));
             const GridIndex nearby_idx = worldToGrid(p.x(), p.y(), p.z());
-            if (preblocked_cells_.find(nearby_idx) != preblocked_cells_.end()) {
+            if (preblocked_hard_obstacle_ &&
+                preblocked_cells_.find(nearby_idx) != preblocked_cells_.end()) {
                 return false;
             }
             const octomap::OcTreeNode * node = octree_->search(p);
@@ -836,6 +846,62 @@ namespace global_planner
         printf("RadicalInfill: %zu components, filled %zu cells.\n",
                components.size(), filled.size());
         traversable_cells_.insert(filled.begin(), filled.end());
+    }
+
+    void GlobalPlanner::flattenTraversable()
+    {
+        if (traversable_cells_.empty()) return;
+
+        const int window = flatten_window_cells_;
+        const int max_delta = flatten_max_delta_cells_;
+
+        // Build 2D height map: (x,y) -> lowest traversable Z
+        std::map<std::pair<int,int>, int> height_map;
+        for (const auto& cell : traversable_cells_) {
+            auto key = std::make_pair(cell.x, cell.y);
+            auto it = height_map.find(key);
+            if (it == height_map.end() || cell.z < it->second) {
+                height_map[key] = cell.z;
+            }
+        }
+
+        // Median-filter each column
+        std::vector<std::pair<GridIndex, int>> adjustments;
+        for (const auto& [key, z] : height_map) {
+            const int x = key.first, y = key.second;
+
+            std::vector<int> neighbor_zs;
+            for (int dx = -window; dx <= window; ++dx) {
+                for (int dy = -window; dy <= window; ++dy) {
+                    auto it = height_map.find({x + dx, y + dy});
+                    if (it != height_map.end()) {
+                        neighbor_zs.push_back(it->second);
+                    }
+                }
+            }
+            if (neighbor_zs.empty()) continue;
+
+            const size_t mid = neighbor_zs.size() / 2;
+            std::nth_element(neighbor_zs.begin(),
+                             neighbor_zs.begin() + static_cast<long>(mid),
+                             neighbor_zs.end());
+            const int median_z = neighbor_zs[mid];
+
+            if (std::abs(z - median_z) <= max_delta && z != median_z) {
+                adjustments.emplace_back(GridIndex{x, y, z}, median_z);
+            }
+        }
+
+        for (const auto& [old_cell, new_z] : adjustments) {
+            traversable_cells_.erase(old_cell);
+            GridIndex new_cell{old_cell.x, old_cell.y, new_z};
+            if (!isOccupiedCell(new_cell)) {
+                traversable_cells_.insert(new_cell);
+            }
+        }
+
+        printf("FlattenTraversable: adjusted %zu / %zu columns (window=%d, max_delta=%d)\n",
+               adjustments.size(), height_map.size(), window, max_delta);
     }
 
 }

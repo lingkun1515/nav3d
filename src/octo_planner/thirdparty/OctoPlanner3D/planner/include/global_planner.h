@@ -86,6 +86,18 @@ struct PlannerConfig
   double radical_infill_radius_m = 1.0;
   double radical_infill_clearance_m = 1.0;
   double radical_infill_half_height_m = 0.1;
+
+  // When false, preblocked cells only affect costmap (soft penalty),
+  // not hard-block traversal. Narrow gaps between small obstacles
+  // become traversable when this is off.
+  bool preblocked_hard_obstacle = true;
+
+  // Flatten noisy traversable surface: median-filter the lowest Z per
+  // (x,y) column within a local window. Stairs/ramps are preserved by
+  // the max_delta limit.
+  bool flatten_enabled = false;
+  int flatten_window_cells = 5;
+  int flatten_max_delta_cells = 1;
 };
 
 class GlobalPlanner
@@ -162,6 +174,8 @@ private:
 
   void radicalInfill();
 
+  void flattenTraversable();
+
   bool isCellTraversable(
     const GridIndex & idx,
     double robot_radius,
@@ -221,6 +235,12 @@ private:
   double radical_infill_radius_m_ = 1.0;
   double radical_infill_clearance_m_ = 1.0;
   double radical_infill_half_height_m_ = 0.1;
+
+  bool preblocked_hard_obstacle_ = true;
+
+  bool flatten_enabled_ = false;
+  int flatten_window_cells_ = 5;
+  int flatten_max_delta_cells_ = 1;
 
   bool map_ready_ = false;
   bool has_start_ = false;

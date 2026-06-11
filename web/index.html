@@ -14,13 +14,14 @@
       <h1 class="logo">Dog3DNav</h1>
 
       <div class="layer-toggles">
-        <label><input id="toggle-occupied" type="checkbox" checked /> 占据</label>
-        <label><input id="toggle-traversable" type="checkbox" /> 可通行</label>
-        <label><input id="toggle-preblocked" type="checkbox" /> 禁行</label>
+        <label><input id="toggle-occupied" type="checkbox" /> 占据</label>
+        <label><input id="toggle-traversable" type="checkbox" checked /> 可通行</label>
+        <label><input id="toggle-preblocked" type="checkbox" checked /> 禁行</label>
         <label><input id="toggle-risk" type="checkbox" /> 代价</label>
       </div>
 
       <button id="reset-view-btn" type="button" class="btn secondary">重置视角</button>
+      <button id="fetch-map-btn" type="button" class="btn secondary">获取地图</button>
 
       <div class="panel-section">
         <div id="robot-status" class="status-indicator offline">机器人未定位</div>
@@ -60,6 +61,11 @@
         <div><strong>地图：</strong><span id="map-status">等待数据</span></div>
         <div><strong>选点：</strong><span id="pick-status">-</span></div>
       </div>
+
+      <details class="log-panel" open>
+        <summary>事件日志 <span id="log-count">(0)</span></summary>
+        <div id="log-list"></div>
+      </details>
     </aside>
 
     <main class="viewport-wrap">

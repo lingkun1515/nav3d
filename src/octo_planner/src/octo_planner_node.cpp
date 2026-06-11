@@ -63,6 +63,10 @@ private:
     declare_parameter("radical_infill_radius_m", 1.0);
     declare_parameter("radical_infill_clearance_m", 1.0);
     declare_parameter("radical_infill_half_height_m", 0.1);
+    declare_parameter("preblocked_hard_obstacle", true);
+    declare_parameter("flatten_enabled", false);
+    declare_parameter("flatten_window_cells", 5);
+    declare_parameter("flatten_max_delta_cells", 1);
     declare_parameter("octomap_publish_period_s", 1.0);
     declare_parameter("auto_publish_enabled", false);
   }
@@ -169,6 +173,10 @@ private:
     planner_cfg.radical_infill_radius_m = get_parameter("radical_infill_radius_m").as_double();
     planner_cfg.radical_infill_clearance_m = get_parameter("radical_infill_clearance_m").as_double();
     planner_cfg.radical_infill_half_height_m = get_parameter("radical_infill_half_height_m").as_double();
+    planner_cfg.preblocked_hard_obstacle = get_parameter("preblocked_hard_obstacle").as_bool();
+    planner_cfg.flatten_enabled = get_parameter("flatten_enabled").as_bool();
+    planner_cfg.flatten_window_cells = get_parameter("flatten_window_cells").as_int();
+    planner_cfg.flatten_max_delta_cells = get_parameter("flatten_max_delta_cells").as_int();
 
     planner_ = std::make_unique<global_planner::GlobalPlanner>();
     planner_->configure(planner_cfg);
