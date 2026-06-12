@@ -101,6 +101,7 @@ const baseFrameCandidates = ['base_link', 'base_footprint', 'robot_base_link'];
 
 // ROS topics (publishers)
 let startTopic = null;
+let startPoseTopic = null;
 let goalTopic = null;
 let goalPoseTopic = null;
 let startNavTopic = null;
@@ -441,9 +442,10 @@ function updateRobotModel() {
   dogModel.visible = true;
   dogModel.position.set(pose.x, pose.y, pose.z);
   dogModel.rotation.set(0, 0, pose.yaw);
+  updateRobotAxes(pose);
   robotStatus.className = 'status-indicator online';
   robotStatus.textContent = '已定位';
-  tfStatus.textContent = `(${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)})`;
+  tfStatus.textContent = `(${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)}) yaw=${(pose.yaw * 180 / Math.PI).toFixed(0)}°`;
   if (!poseFirstReceived) {
     poseFirstReceived = true;
     log(`机器人已定位: (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)})`, 'ok');
@@ -508,7 +510,6 @@ function clearDragPreview() {
 
 function onCanvasPointerMove(event) {
   if (!pointerCaptured || !dragStart) return;
-  if (placementMode !== 'goal' && placementMode !== 'navigate') return;
 
   const endPt = pickOnPlane(event, dragPlaneZ);
   if (!endPt) return;
@@ -521,24 +522,13 @@ function onCanvasPointerMove(event) {
   const yaw = Math.atan2(dy, dx);
   clearDragPreview();
 
-  const arrowLen = Math.min(dist, 1.0);
+  const arrowLen = Math.min(dist * 1.5, 1.0);
   const arrowGroup = new THREE.Group();
-  arrowGroup.position.set(dragStart.x, dragStart.y, dragStart.z + 0.05);
+  arrowGroup.position.set(dragStart.x, dragStart.y, dragStart.z + 0.08);
 
-  const shaftGeo = new THREE.CylinderGeometry(0.025, 0.025, arrowLen, 6);
-  shaftGeo.rotateX(Math.PI / 2);
-  const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffab40, transparent: true, opacity: 0.8 });
-  const shaft = new THREE.Mesh(shaftGeo, arrowMat);
-  shaft.position.set(Math.cos(yaw) * arrowLen / 2, Math.sin(yaw) * arrowLen / 2, 0);
-  shaft.rotation.set(0, 0, yaw);
-  arrowGroup.add(shaft);
-
-  const coneGeo = new THREE.ConeGeometry(0.07, 0.18, 6);
-  coneGeo.rotateX(Math.PI / 2);
-  const cone = new THREE.Mesh(coneGeo, arrowMat.clone());
-  cone.position.set(Math.cos(yaw) * arrowLen, Math.sin(yaw) * arrowLen, 0);
-  cone.rotation.set(0, 0, yaw - Math.PI / 2);
-  arrowGroup.add(cone);
+  const arrow = makeArrow(arrowLen, 0xffab40, 0.85);
+  arrow.rotation.set(0, 0, yaw);
+  arrowGroup.add(arrow);
 
   markersGroup.add(arrowGroup);
   dragPreviewArrow = arrowGroup;
@@ -567,10 +557,11 @@ function onCanvasPointerUp(event) {
   if (placementMode === 'start') {
     startPoint = { x: origin.x, y: origin.y, z: origin.z };
     hasStart = true;
-    publishStartPoint(origin);
-    pickStatus.textContent = `起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)})`;
-    setMarker('start', origin, 0x66bb6a);
-    log(`设置起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}, ${origin.z.toFixed(2)})`, 'info');
+    publishStartPose(origin, yaw);
+    const yawDeg = (yaw * 180 / Math.PI).toFixed(1);
+    pickStatus.textContent = `起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}) yaw=${yawDeg}°`;
+    setMarker('start', origin, 0x66bb6a, yaw);
+    log(`设置起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}, ${origin.z.toFixed(2)}) 航向=${yawDeg}°`, 'info');
   } else if (placementMode === 'goal' || placementMode === 'navigate') {
     goalPoint = { x: origin.x, y: origin.y, z: origin.z };
     hasGoal = true;
@@ -594,56 +585,91 @@ function onCanvasPointerUp(event) {
 
 const namedMarkers = {};
 
+function makeArrow(length, color, opacity = 1.0) {
+  // Arrow pointing in +X, lying in XY plane
+  const arrow = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.5,
+    transparent: opacity < 1, opacity
+  });
+
+  const shaftLen = length * 0.7;
+  const shaftGeo = new THREE.CylinderGeometry(0.025, 0.025, shaftLen, 8);
+  shaftGeo.rotateZ(-Math.PI / 2); // lay along +X
+  const shaft = new THREE.Mesh(shaftGeo, mat);
+  shaft.position.set(shaftLen / 2, 0, 0);
+  arrow.add(shaft);
+
+  const coneGeo = new THREE.ConeGeometry(0.07, length * 0.3, 8);
+  coneGeo.rotateZ(-Math.PI / 2); // tip toward +X
+  const cone = new THREE.Mesh(coneGeo, mat.clone());
+  cone.position.set(shaftLen + length * 0.15, 0, 0);
+  arrow.add(cone);
+
+  return arrow;
+}
+
 function setMarker(name, point, color, yaw = null) {
   if (namedMarkers[name]) {
     markersGroup.remove(namedMarkers[name]);
-    if (namedMarkers[name].traverse) {
-      namedMarkers[name].traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-        if (child.material) child.material.dispose();
-      });
-    }
+    namedMarkers[name].traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
   }
 
   const group = new THREE.Group();
-  group.position.set(point.x, point.y, point.z);
+  group.position.set(point.x, point.y, point.z + 0.05);
   group.name = name;
 
-  const geo = new THREE.SphereGeometry(0.15, 16, 16);
+  const geo = new THREE.SphereGeometry(0.12, 16, 16);
   const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
   group.add(new THREE.Mesh(geo, mat));
 
   if (yaw !== null) {
-    const arrowLen = 0.6;
-    const arrowGeo = new THREE.ConeGeometry(0.08, 0.2, 8);
-    arrowGeo.rotateX(Math.PI / 2);
-    arrowGeo.translate(0, 0, 0);
-    const arrowMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6 });
-    const cone = new THREE.Mesh(arrowGeo, arrowMat);
-    cone.position.set(Math.cos(yaw) * arrowLen, Math.sin(yaw) * arrowLen, 0);
-
-    const shaftGeo = new THREE.CylinderGeometry(0.03, 0.03, arrowLen, 8);
-    shaftGeo.rotateX(Math.PI / 2);
-    shaftGeo.translate(0, 0, 0);
-    const shaft = new THREE.Mesh(shaftGeo, arrowMat.clone());
-    shaft.position.set(Math.cos(yaw) * arrowLen / 2, Math.sin(yaw) * arrowLen / 2, 0);
-    shaft.rotation.set(0, 0, yaw);
-
-    group.add(cone);
-    group.add(shaft);
+    const arrow = makeArrow(0.6, color);
+    arrow.rotation.set(0, 0, yaw);
+    group.add(arrow);
   }
 
   markersGroup.add(group);
   namedMarkers[name] = group;
 }
 
+// Robot pose visualizer: small XYZ axes (6DOF)
+let robotAxesHelper = null;
+
+function updateRobotAxes(pose) {
+  if (!robotAxesHelper) {
+    robotAxesHelper = new THREE.AxesHelper(0.4);
+    robotGroup.add(robotAxesHelper);
+  }
+  robotAxesHelper.visible = true;
+  robotAxesHelper.position.set(pose.x, pose.y, pose.z + 0.02);
+  robotAxesHelper.rotation.set(0, 0, pose.yaw);
+}
+
 // ===== ROS Publishing =====
+function publishStartPose(pt, yaw = 0) {
+  if (startTopic) {
+    startTopic.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      point: { x: pt.x, y: pt.y, z: pt.z }
+    }));
+  }
+  if (startPoseTopic) {
+    startPoseTopic.publish(new ROSLIB.Message({
+      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+      pose: {
+        position: { x: pt.x, y: pt.y, z: pt.z },
+        orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) }
+      }
+    }));
+  }
+}
+
 function publishStartPoint(pt) {
-  if (!startTopic) return;
-  startTopic.publish(new ROSLIB.Message({
-    header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
-    point: { x: pt.x, y: pt.y, z: pt.z }
-  }));
+  publishStartPose(pt, 0);
 }
 
 function publishGoalPose(pt, yaw) {
@@ -823,6 +849,7 @@ function scheduleReconnect() {
 function setupTopics() {
   // Publishers
   startTopic = new ROSLIB.Topic({ ros, name: '/start_point', messageType: 'geometry_msgs/PointStamped' });
+  startPoseTopic = new ROSLIB.Topic({ ros, name: '/start_pose', messageType: 'geometry_msgs/PoseStamped' });
   goalTopic = new ROSLIB.Topic({ ros, name: '/goal_point', messageType: 'geometry_msgs/PointStamped' });
   goalPoseTopic = new ROSLIB.Topic({ ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
   startNavTopic = new ROSLIB.Topic({ ros, name: '/start_navigation', messageType: 'std_msgs/Bool' });

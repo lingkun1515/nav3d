@@ -27,6 +27,7 @@ Dog3DNav/
 ## 文档
 
 - [快速入门指南](docs/quickstart.md)
+- [全闭环导航调试指南](docs/full_navigation_guide.md)
 - [ROS 2 参数参考手册](docs/params_reference.md)
 - [系统架构设计](docs/architecture.md)
 

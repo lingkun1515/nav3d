@@ -4,7 +4,7 @@
 
 - Ubuntu 22.04
 - ROS 2 Humble
-- Python 3 (conda `dimos` 环境，含 Open3D)
+- Python 3 (含 Open3D)
 - ros-humble-rosbridge-server
 - PCL, liboctomap-dev
 
@@ -173,3 +173,7 @@ ros2 topic echo /planned_path --once
 | 连接状态显示「已断开」 | 确认 rosbridge 在 9090 端口运行；检查防火墙 |
 | 规划失败 | 确认起终点在可通行区域内；尝试增大 `snap_search_radius_cells` |
 | 编译报错找不到 octomap | `sudo apt install liboctomap-dev ros-humble-octomap-msgs` |
+
+## 下一步
+
+- [全闭环导航调试指南](full_navigation_guide.md) — 在 Gazebo 仿真中运行完整的导航闭环（全局规划 + 局部避障 + 速度控制）
