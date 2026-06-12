@@ -155,15 +155,31 @@
 | `goalX` | double | `0.0` | 固定导航目标 X 坐标 (vehicle 帧)。`autonomyMode=true` 且无外部 waypoint 时使用 |
 | `goalY` | double | `0.0` | 固定导航目标 Y 坐标 (vehicle 帧) |
 
+#### 2.1.6 TF / 输入配置
+
+| 参数 | 类型 | 默认 | 含义 |
+|------|------|------|------|
+| `global_frame_id` | string | `"odom"` | 障碍物点云 TF 转换的目标坐标系。所有输入点云（无论原始 frame_id）都会转换到此坐标系 |
+| `use_planned_path` | bool | `false` | 是否订阅 `/planned_path` (nav_msgs::Path) 自行管理航点。`true` 时从全局路径提取 lookahead 航点作为局部目标，并在到达后自动推进；`false` 时使用 `/way_point` 话题接收单个目标点 |
+| `use_laser_scan` | bool | `false` | 是否订阅 `/scan` (sensor_msgs::LaserScan)。`true` 时在回调中将 LaserScan 转为 PointCloud2（XYZI 格式），再经 TF 转换后走原有避障逻辑；`false` 时直接订阅 `/registered_scan` (PointCloud2) |
+| `waypoint_lookahead` | double | `2.5` | 航点前视距离 (m)。从 `/planned_path` 中提取距离机器人此距离的航点作为局部目标。值越大路径越平滑但可能错过转弯 |
+| `waypoint_tolerance` | double | `0.5` | 航点到达判定距离 (m)。机器人当前位置距当前目标航点小于此值时，自动推进到下一个航点 |
+
 ---
 
 ### 2.2 pathFollower 节点 — Pure-Pursuit 轨迹跟踪
+
+**话题接口补充：**
+
+| 方向 | 话题 | 类型 | 说明 |
+|------|------|------|------|
+| 入 | `/stop_navigation` | Bool | Web UI 下发，收到 `true` 时触发安全停车（`safety_stop_ = 1`），停止线速度 |
 
 #### 2.2.1 硬件
 
 | 参数 | 类型 | 默认 | 含义 |
 |------|------|------|------|
-| `realRobot` | bool | `false` | 是否使用真实机器人串口通信。`false` 时仅通过 ROS topic `/cmd_vel` 输出 |
+| `realRobot` | bool | `false` | 是否使用真实机器人串口通信。`false` 时仅通过 ROS topic `/cmd_vel` 输出（Twist 类型，非 TwistStamped） |
 | `serialPort` | string | `"/dev/ttyACM0"` | 串口设备路径。仅 `realRobot=true` 时生效 |
 | `baudrate` | int | `115200` | 串口波特率 |
 | `sensorOffsetX` | double | `0.0` | 传感器 X 偏移 (m)，用于坐标补偿 |

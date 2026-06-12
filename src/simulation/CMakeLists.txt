@@ -14,7 +14,6 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/pcd_to_world.py
-  scripts/waypoint_follower.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -9,37 +9,24 @@
 
 ```
 ┌─────────┐    /goal_pose     ┌──────────────┐   /planned_path    ┌────────────────┐
-│ Web UI  │ ─────────────────▶│ octo_planner │───────────────────▶│ path_bridge    │
-│(选点导航)│                   │  (全局 A*)   │                    │(全局路径→waypoint)│
+│ Web UI  │ ─────────────────▶│ octo_planner │───────────────────▶│  localPlanner  │
+│(选点导航)│                   │  (全局 A*)   │                    │(航点管理+避障) │
 └─────────┘                   └──────────────┘                    └───────┬────────┘
-     │                                                                      │
-     │ /tf, odom                                                  /way_point│
-     │                                                                      ▼
-     │                                                              ┌──────────────┐
-     │                                                              │localPlanner  │
-     │                                                              │(格栅避障规划) │
-     │                                                              └──────┬───────┘
-     │                                                           /path     │
-     │                                                           /slow_down │
-     │                                                                     ▼
-     │                                                              ┌──────────────┐
-     │                                                              │pathFollower  │
-     │                                                              │(纯跟踪控制)  │
-     │                                                              └──────┬───────┘
-     │                                                           /cmd_vel(TwistStamped)
-     │                                                                     │
-     │                                                          ┌──────────▼──────────┐
-     │                                                          │  cmd_vel_adapter    │
-     │                                                          │(TwistStamped→Twist) │
-     │                                                          └──────────┬──────────┘
-     │                                                           /cmd_vel(Twist)
-     │                                                                     │
-     │  /tf (odom→base_link)     ┌──────────────┐                         ▼
-     │◀──────────────────────────│    Gazebo     │◀────────────── diff_drive_robot
+     │                                                                   │
+     │ /tf, /odom                                               /path     │
+     │                                                                   ▼
+     │                                                           ┌──────────────┐
+     │                                                           │ pathFollower │
+     │                                                           │(pure-pursuit)│
+     │                                                           └──────┬───────┘
+     │                                                            /cmd_vel(Twist)
+     │                                                                   │
+     │  /tf (odom→base_link)     ┌──────────────┐                       ▼
+     │◀──────────────────────────│    Gazebo     │◀────────── diff_drive_robot
      │                           │ (仿真物理引擎) │
      │                           └──────────────┘
      │                                    │
-     │                           /registered_scan (激光点云)
+     │                           /scan (LaserScan, 内部转PC2+TF)
      │                                    │
      │                                    ▼
      │                            localPlanner 感知输入
@@ -51,11 +38,11 @@
 |------|------|------|------|
 | 全局目标 | `/goal_pose` | PoseStamped | Web 发布目标位姿 |
 | 全局路径 | `/planned_path` | Path | octo_planner 的 A* 路径（map 坐标系） |
-| 局部目标 | `/way_point` | PointStamped | path_bridge 从全局路径提取的当前子目标 |
-| 里程计 | `/state_estimation` | Odometry | Gazebo 差速驱动发布的里程计真值 |
-| 障碍点云 | `/registered_scan` | Point2 | Gazebo 激光雷达发布的点云 |
-| 局部路径 | `/path` | Path | localPlanner 选中的无碰撞格栅路径（base 坐标系） |
-| 速度指令 | `/cmd_vel` | Twist | pathFollower 输出（经适配器转为 Gazebo 格式） |
+| 局部航点 | 内部管理 | - | localPlanner 从 /planned_path 提取 lookahead 航点 |
+| 里程计 | `/odom` | Odometry | Gazebo 差速驱动里程计真值，通过 remap→/state_estimation |
+| 激光扫描 | `/scan` | LaserScan | Gazebo 激光雷达，localPlanner 内部转 PointCloud2+TF→odom |
+| 局部路径 | `/path` | Path | localPlanner 选中的无碰格栅路径（vehicle 帧） |
+| 速度指令 | `/cmd_vel` | Twist | pathFollower 输出，直接驱动 Gazebo diff_drive |
 
 ---
 
@@ -84,61 +71,49 @@ source install/setup.bash
 
 ## 4. 端到端 Launch 方式
 
-### 4.1 仿真 + 全局规划（简易模式，使用 waypoint_follower）
-
-适合初次验证全局路径规划是否正确：
+### 4.1 完整导航闭环（一键启动）
 
 ```bash
 ros2 launch simulation navigation.launch.py \
   pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
 ```
 
-此模式下 `waypoint_follower.py` 直接跟踪 `/planned_path`，不经过局部规划器。
-适合验证地图加载、全局规划、Web 交互的基本功能。
+此命令同时启动：Gazebo（自动从 PCD 生成世界场景）+ octo_planner + localPlanner + pathFollower + rosbridge。
+所有逻辑均在 C++ 节点内闭环，无 Python 中继节点。
 
-### 4.2 全闭环模式（全局 + 局部规划）
-
-需要 4 个组件同时运行：
+若不需要障碍物场景（仅测试运动控制），省略 pcd_file 参数即可在空地启动：
 
 ```bash
-# 终端 1: Gazebo 仿真 + 机器人
-ros2 launch simulation gazebo.launch.py \
-  world:=$(ros2 pkg prefix simulation)/share/simulation/worlds/obstacles.world
+ros2 launch simulation navigation.launch.py
+```
+
+### 4.2 分步启动（调试用）
+
+如果需要分步调试单个组件：
+
+```bash
+# 终端 1: Gazebo 仿真
+ros2 launch simulation gazebo.launch.py
 
 # 终端 2: 全局规划器
 ros2 run octo_planner octo_planner_node --ros-args \
   -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd \
   -p resolution:=0.2 -p robot_radius:=0.25
 
-# 终端 3: 局部规划器
-ros2 launch local_planner local_planner.launch.py
-
-# 终端 4: 路径桥接 + 速度适配 + rosbridge
-# （见 4.3 节，需要运行 bridge 节点）
-```
-
-### 4.3 话题桥接
-
-由于各模块间存在话题名称和类型差异，需要运行桥接节点。在编译好的 install 目录下提供 `nav_bridge.py`：
-
-```bash
-# 终端 4: 桥接节点 + rosbridge
-ros2 run simulation nav_bridge.py &
+# 终端 3: 局部规划 + 轨迹跟踪
+ros2 run local_planner localPlanner --ros-args \
+  -p autonomyMode:=true -p use_laser_scan:=true -p use_planned_path:=true &
+ros2 run local_planner pathFollower --ros-args \
+  -p autonomyMode:=true &
 ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 &
 ```
 
-桥接节点负责：
-1. **全局→局部目标转换**：订阅 `/planned_path`，沿路径等间距提取子目标发布到 `/way_point`
-2. **速度指令适配**：订阅 `/cmd_vel`（TwistStamped），转为 Twist 发布到 Gazebo 的 `/cmd_vel`
-3. **里程计转发**：订阅 Gazebo 的 `/odom`，发布到 local_planner 需要的 `/state_estimation`
-4. **点云转发**：订阅 Gazebo 的 `/scan`（LaserScan），转为 PointCloud2 发布到 `/registered_scan`
+### 4.3 使用 PCD 地图生成 Gazebo 场景（离线）
 
-### 4.4 使用 PCD 地图生成 Gazebo 场景
-
-如果已有 PCD 点云地图，可直接生成 Gazebo 世界文件：
+也可以预先生成世界文件：
 
 ```bash
-# 生成带障碍物的 Gazebo 世界
+# 离线生成带障碍物的 Gazebo 世界
 python3 src/simulation/scripts/pcd_to_world.py \
   maps/building_map.pcd \
   src/simulation/worlds/from_pcd.world \
@@ -151,6 +126,7 @@ ros2 launch simulation gazebo.launch.py \
 
 > 注意：`pcd_to_world.py` 默认去除最低 Z 层（地面），将剩余体素合并为碰撞 box。
 > `--max-boxes 5000` 限制最大 box 数，过大会影响 Gazebo 性能。
+> 使用 `navigation.launch.py` 时，此步骤自动执行，无需手动调用。
 
 ---
 
@@ -179,8 +155,13 @@ ros2 launch simulation gazebo.launch.py \
 | `obstacleHeightThre` | 0.2 | 0.15 | 障碍物高度阈值 (m) |
 | `checkObstacle` | true | true | 是否启用避障 |
 | `autonomyMode` | false | **true** | 自主导航模式（必须开启） |
-| `autonomySpeed` | 1.0 | 0.3 | 自主导航速度 (m/s) |
+| `autonomySpeed` | 1.0 | 0.5 | 自主导航速度 (m/s) |
 | `maxSpeed` | 1.0 | 0.5 | 最大速度 (m/s) |
+| `use_laser_scan` | false | **true** | 订阅 /scan (LaserScan) |
+| `use_planned_path` | false | **true** | 订阅 /planned_path，内部管理航点 |
+| `global_frame_id` | "odom" | "odom" | 点云 TF 转换的目标坐标系 |
+| `waypoint_lookahead` | 2.5 | 2.5 | 航点前视距离 (m) |
+| `waypoint_tolerance` | 0.5 | 0.5 | 航点到达容差 (m) |
 
 ### 6.2 路径跟踪器 (pathFollower)
 
@@ -193,17 +174,6 @@ ros2 launch simulation gazebo.launch.py \
 | `stopDisThre` | 0.2 | 0.2 | 到达目标距离阈值 (m) |
 | `noRotAtGoal` | true | true | 到达目标后停止旋转 |
 
-### 6.3 waypoint_follower（简易模式专用）
-
-编辑 `src/simulation/config/sim_params.yaml`：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `lookahead_distance` | 0.4 | 前视距离 (m) |
-| `linear_speed` | 0.3 | 线速度 (m/s) |
-| `max_angular_speed` | 1.0 | 最大角速度 (rad/s) |
-| `goal_tolerance` | 0.2 | 到达判定距离 (m) |
-
 ---
 
 ## 7. 调试工具
@@ -211,12 +181,11 @@ ros2 launch simulation gazebo.launch.py \
 ### 7.1 RViz2 可视化
 
 ```bash
-rviz2 -d src/simulation/config/debug.rviz
-# 或手动添加：
-# - Map 显示 /octomap_binary (OctoMap)
+rviz2
+# 手动添加：
 # - Path 显示 /planned_path (全局路径, 紫色)
 # - Path 显示 /path (局部路径, 绿色)
-# - PointCloud2 显示 /registered_scan (激光)
+# - LaserScan 显示 /scan (激光扫描)
 # - Odometry 显示 /odom (里程计)
 # - TF 显示坐标树
 ```
@@ -236,12 +205,15 @@ ros2 topic echo /cmd_vel
 # 查看里程计
 ros2 topic echo /odom --once
 
+# 查看激光扫描
+ros2 topic echo /scan --once
+
 # 检查 TF 树
 ros2 run tf2_tools view_frames
 
 # 查看话题频率
-ros2 topic hz /state_estimation
-ros2 topic hz /registered_scan
+ros2 topic hz /odom
+ros2 topic hz /scan
 ```
 
 ### 7.3 手动发布目标测试
@@ -267,12 +239,13 @@ ros2 topic pub /way_point geometry_msgs/PointStamped \
 | 问题 | 排查 |
 |------|------|
 | Gazebo 中小车不动 | 检查 `/cmd_vel` 话题是否有数据 (`ros2 topic echo /cmd_vel`) |
-| 小车原地打转 | `local_planner` 的 `autonomyMode` 未设为 `true` |
-| 局部规划器不输出路径 | 检查 `/registered_scan` 是否有数据；`adjacentRange` 是否覆盖到障碍物 |
+| 小车原地打转 | `localPlanner` 的 `autonomyMode` 未设为 `true` |
+| 局部规划器不输出路径 | 检查 `/scan` 是否有数据；`adjacentRange` 是否覆盖到障碍物 |
 | 小车撞障碍物 | 减小 `vehicleLength`/`vehicleWidth`，或增大 `vehicleWidthMargin` |
 | 全局路径在 Gazebo 中不对齐 | 确认 PCD 地图与 Gazebo 世界坐标原点一致；检查 `map→odom` TF |
-| `/state_estimation` 无数据 | 确认 bridge 节点在运行，将 `/odom` 转发到 `/state_estination` |
+| 里程计无数据 | 检查 Gazebo 是否正常运行；`ros2 topic hz /odom` |
 | 激光雷达无数据 | 确认 URDF 中 `lidar_link` 传感器配置正确；`ros2 topic hz /scan` |
+| 场景无障碍物 | 确认传入了 `pcd_file` 参数，launch 会自动生成世界；或手动运行 `pcd_to_world.py` |
 | rosbridge 连不上 | 确认 9090 端口未被占用；检查防火墙 |
 
 ---
@@ -284,18 +257,15 @@ ros2 topic pub /way_point geometry_msgs/PointStamped \
 ─────────────────────────────────────────────────────────────────────────────
 /goal_pose                  PoseStamped               Web UI     → octo_planner
 /start_point                PointStamped              Web UI     → octo_planner
-/start_navigation           Bool                      Web UI     → path_bridge
-/stop_navigation            Bool                      Web UI     → path_bridge
-/planned_path               Path                      octo_planner → path_bridge
-/way_point                  PointStamped              path_bridge → localPlanner
-/state_estimation           Odometry                  path_bridge → localPlanner
-/registered_scan            PointCloud2               path_bridge → localPlanner
+/start_navigation           Bool                      Web UI     → localPlanner
+/stop_navigation            Bool                      Web UI     → pathFollower
+/planned_path               Path                      octo_planner → localPlanner
+/odom                       Odometry                  Gazebo      → localPlanner, pathFollower
+/scan                       LaserScan                 Gazebo      → localPlanner
 /path                       Path                      localPlanner → pathFollower
 /slow_down                  Int8                      localPlanner → pathFollower
 /surrounding_block          Int8                      localPlanner → pathFollower
-/cmd_vel (TwistStamped)     TwistStamped              pathFollower → path_bridge
-/cmd_vel (Twist)            Twist                     path_bridge  → Gazebo
-/odom                       Odometry                  Gazebo      → path_bridge
-/scan                       LaserScan                 Gazebo      → path_bridge
+/cmd_vel                    Twist                     pathFollower → Gazebo
 /tf                         TFMessage                 Gazebo      → Web UI / 各节点
+/web_cmd_vel                Twist                     Web UI      → pathFollower
 ```

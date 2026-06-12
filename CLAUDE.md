@@ -9,9 +9,13 @@ Dog3DNav/
 ├── src/
 │   ├── octo_planner/    # 全局3D路径规划器（ROS 2 package）
 │   ├── local_planner/   # 局部规划 + 实时避障 + waypoint following（ROS 2 package）
+│   ├── simulation/      # Gazebo 仿真包（差速轮小车 URDF + PCD→世界场景生成）
 │   ├── embodied/        # 具身感知理解模块（预留，暂不开发）
 │   └── slam/            # 建图定位（git submodule，暂不管）
-└── web/                 # Web 前端交互页面
+├── maps/                # 地图预处理脚本
+├── docs/                # 项目文档
+├── web/                 # Web 前端交互页面
+└── docker/              # Docker 配置
 ```
 
 ## 模块说明
@@ -53,15 +57,44 @@ void getPlannerResults(std::vector<PointPose>& results);
 
 移植自 CMU autonomy_stack（`~/Projects/NavProject/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/local_planner`）。
 
-**原始系统功能：**
-- `localPlanner.cpp` — 基于预生成路径集的局部规划，接收里程计 + 障碍物点云，输出速度指令
-- `pathFollower.cpp` — waypoint following，跟踪全局路径下发的 waypoint 序列
+**已实现功能：**
+- `localPlanner` — 基于预生成路径集的局部规划 + 实时避障
+  - 输入：`/scan`(LaserScan→PC2+TF) 或 `/registered_scan`(PointCloud2+TF)，`/odom`(通过 remap)，`/planned_path`(航点管理) 或 `/way_point`(直设目标)
+  - 内部 TF 转换任意输入帧到 `global_frame_id` 参数指定的坐标系
+  - 订阅 `/start_navigation`(Bool) 激活航点推进
+  - 输出：`/path`(局部路径，vehicle 帧)，`/slow_down`，`/surrounding_block`
+- `pathFollower` — pure-pursuit 路径跟踪 + Twist 指令发布
+  - 订阅 `/path`(局部路径)、`/odom`(通过 remap)、`/stop_navigation`(Bool)、`/stop`(Int8)
+  - 输出：`/cmd_vel`(Twist)，含安全停车、侧向避障、下坡减速逻辑
 - 预生成路径集（paths/*.ply）用于快速轨迹采样
 
-**移植要点：**
-- 原始为 ROS 2 节点，需适配本系统的话题/坐标系约定
-- 与 octo_planner 的数据流对齐方案待确认（waypoint 格式、坐标系、更新频率等）
-- 机器狗运动学适配（原始面向麦轮平台，需调整运动约束）
+**关键参数（数据流控制）：**
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `use_laser_scan` | `false` | true=订阅 `/scan`(LaserScan)，内部转 PC2+TF |
+| `use_planned_path` | `false` | true=订阅 `/planned_path`(Path)，自行管理航点 |
+| `global_frame_id` | `"odom"` | 障碍物点云的目标坐标系 |
+
+### simulation — Gazebo 仿真
+
+ROS 2 package，提供仿真环境用于闭环导航调试。
+
+**核心能力：**
+- 差速驱动小车 URDF（Xacro），含 Gazebo 插件（diff_drive + lidar + joint_states）
+- 发布里程计真值（`/odom`）、TF（odom→base_footprint→base_link）、激光扫描（`/scan`）
+- 接受 `/cmd_vel`（Twist）控制小车移动
+- pcd_to_world：PCD → Gazebo `.world` 离线转换（体素化 → 贪婪合并 → SDF box）。launch 文件在提供 `pcd_file` 参数时自动调用，生成场景到 `/tmp/dog3dnav_auto.world`
+- nav\_bridge / waypoint\_follower 已删除：所有中继/控制逻辑已下沉到 localPlanner / pathFollower (C++)
+
+**启动方式：**
+```bash
+# 仅仿真（空地）
+ros2 launch simulation gazebo.launch.py
+# 带障碍物（预生成的 world 文件）
+ros2 launch simulation gazebo.launch.py world:=.../worlds/obstacles.world
+# 全导航闭环（PCD 自动生成世界场景 + 规划 + 控制）
+ros2 launch simulation navigation.launch.py pcd_file:=/path/to/map.pcd
+```
 
 ### slam — 建图与定位
 
@@ -78,15 +111,16 @@ Git submodule，由外部仓库导入。当前状态：预留。
 
 ### web — 前端交互
 
-独立前端应用，提供：
-- 3D 地图可视化（OctoMap 体素渲染）
-- 实时机器人位姿显示
-- 路径可视化与导航目标设置
-- 地图编辑（禁行区标注等）
-- 手动运动控制（虚拟摇杆）
-- 导航指令下发与状态监控
+独立前端应用（Three.js + ROSBridge），提供：
+- 3D 地图可视化（OctoMap 体素渲染：占据/可通行/禁行/代价四层可切换）
+- 实时机器人位姿显示（TF 解析 + 6DOF 坐标轴 + 狗模型）
+- 点击可通行体素设置起/终点，拖拽设定航向角（箭头可视化）
+- 导航目标下发 → 接收规划路径（亮青色发光管线）→ 弹窗确认执行/停止
+- 事件日志面板（起终点坐标+航向、导航开始/停止、地图加载进度等）
+- 地图编辑交互（禁行区标注等）
+- 手动运动控制（虚拟摇杆 + 旋转滑块，发布 `/web_cmd_vel`）
 
-**通信方案：** 待确认（候选：rosbridge_suite WebSocket / 独立后端 API）
+**通信方案：** rosbridge WebSocket（`ws://localhost:9090`），话题发布/订阅均在 main.js 中管理。
 
 ## 外部依赖路径
 
@@ -113,9 +147,45 @@ source install/setup.bash
 - `odom` — 里程计坐标系
 - `base_link` — 机器人本体坐标系
 
-## 待确认设计决策
+## 开发原则
 
-1. **Web 通信方案**：rosbridge WebSocket vs 独立后端（FastAPI/Node.js）+ REST/WebSocket
-2. **local_planner 数据流**：与 octo_planner 的 waypoint 传递格式、更新策略
-3. **地图管理**：预建地图的存储格式、加载方式、运行时更新机制
-4. **机器狗适配**：速度指令接口格式（Twist vs 自定义）、运动约束参数
+1. **C++ 优先**：所有部署运行的算法包必须用 C++。Python 仅允许用于简单测试脚本（如 launch 文件、单元测试、一次性数据预处理脚本）。杜绝用 Python 写中继节点（remap 可替代的话题转发、应下沉到 C++ 节点的逻辑转换等）。
+2. **代码位置**：功能应尽可能放入已有 C++ 节点（localPlanner / pathFollower），而非新增中继节点。新增 ROS 参数来控制行为切换。
+
+## 已确定设计决策
+
+1. **Web 通信方案**：rosbridge WebSocket（`ws://localhost:9090`），使用 roslib.min.js 客户端库
+2. **地图管理**：PCD 点云文件 → octo_planner 加载为 OctoMap；预处理脚本 `maps/map_preprocessor.py` 负责对齐/降采样/补全
+3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
+
+## 待解决
+
+1. ~~**cmd_vel 类型适配**~~ ✓ 已修复：pathFollower 改为发布 `Twist`（原 `TwistStamped`）
+2. ~~**nav_bridge.py**~~ ✓ 已删除：功能通过 launch remap + localPlanner C++ 内部实现（TF 坐标变换 + LaserScan→PointCloud2 转换 + `/planned_path` 航点管理）
+3. ~~**local_planner 数据流**~~ ✓ 全链路已打通：localPlanner 直接订阅 `/scan`(LaserScan) 或 `/registered_scan`(PointCloud2)，通过 TF 转全局系；支持 `/planned_path`(航点管理) 或 `/way_point`(直设目标)；`/odom` 通过 remap 替代 `/state_estimation`
+4. ~~**导航生命周期**~~ ✓ 已实现：`/start_navigation`(Bool) 由 Web UI 和 localPlanner 管理；`/stop_navigation`(Bool) 由 pathFollower 处理（安全停车）
+5. ~~**waypoint_follower.py**~~ ✓ 已删除：`navigation.launch.py` 现已使用 localPlanner + pathFollower (C++) 做全闭环控制，PCD→world 场景自动生成
+6. **机器狗运动学适配**：真实机器狗的速度指令接口（Twist vs 自定义）、运动约束参数
+
+## 闭环导航测试
+
+### 启动命令
+```bash
+# 完整导航闭环（Gazebo + octo_planner + localPlanner + pathFollower + rosbridge）
+# 提供 pcd_file 时自动生成 Gazebo 世界场景
+ros2 launch simulation navigation.launch.py pcd_file:=/home/lenovo/Projects/NavProject/Dog3DNav/maps/building_map.pcd
+
+# 无 PCD 时使用空地世界（仅测试运动控制）
+ros2 launch simulation navigation.launch.py
+```
+
+### 数据流
+```
+完整管线 (navigation.launch.py):
+  Web UI ─/goal_pose→ octo_planner ─/planned_path→ localPlanner (航点管理+TF)
+         ─/start_navigation→ localPlanner
+         ─/stop_navigation→ pathFollower
+  Gazebo ─/odom→ (remap)→ /state_estimation→ localPlanner + pathFollower
+         ─/scan→ localPlanner (内部 LaserScan→PointCloud2 + TF→odom)
+  localPlanner ─/path→ pathFollower ─/cmd_vel→ Gazebo
+```

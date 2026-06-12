@@ -8,6 +8,7 @@
 
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/joy.hpp"
 #include "std_msgs/msg/float32.hpp"
@@ -19,6 +20,10 @@
 
 #include "tf2/transform_datatypes.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
@@ -41,8 +46,10 @@ public:
   LocalPlannerNode() : Node("localPlanner")
   {
     declare_parameters();
-    setup_pub_sub();
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
     load_path_files();
+    setup_pub_sub();
 
     RCLCPP_INFO(get_logger(), "LocalPlanner initialization complete.");
 
@@ -103,6 +110,12 @@ private:
     declare_parameter("goalBehindRange", 0.8);
     declare_parameter("goalX", 0.0);
     declare_parameter("goalY", 0.0);
+
+    declare_parameter<std::string>("global_frame_id", "odom");
+    declare_parameter("use_planned_path", false);
+    declare_parameter("use_laser_scan", false);
+    declare_parameter("waypoint_lookahead", 2.5);
+    declare_parameter("waypoint_tolerance", 0.5);
   }
 
   void setup_pub_sub()
@@ -113,9 +126,16 @@ private:
       "/state_estimation", qos,
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { odometry_callback(msg); });
 
-    sub_laser_cloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-      "/registered_scan", qos,
-      [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) { laser_cloud_callback(msg); });
+    // Laser / obstacle cloud input
+    if (use_laser_scan_) {
+      sub_scan_ = create_subscription<sensor_msgs::msg::LaserScan>(
+        "/scan", qos,
+        [this](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) { scan_callback(msg); });
+    } else {
+      sub_laser_cloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+        "/registered_scan", qos,
+        [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) { laser_cloud_callback(msg); });
+    }
 
     sub_terrain_cloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
       "/terrain_map", qos,
@@ -125,9 +145,20 @@ private:
       "/joy", qos,
       [this](sensor_msgs::msg::Joy::ConstSharedPtr msg) { joystick_callback(msg); });
 
-    sub_goal_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      "/way_point", qos,
-      [this](geometry_msgs::msg::PointStamped::ConstSharedPtr msg) { goal_callback(msg); });
+    // Goal input: /planned_path (with waypoint mgmt) or /way_point (direct)
+    if (use_planned_path_) {
+      sub_planned_path_ = create_subscription<nav_msgs::msg::Path>(
+        "/planned_path", qos,
+        [this](nav_msgs::msg::Path::ConstSharedPtr msg) { planned_path_callback(msg); });
+
+      sub_start_nav_ = create_subscription<std_msgs::msg::Bool>(
+        "/start_navigation", qos,
+        [this](std_msgs::msg::Bool::ConstSharedPtr msg) { start_navigation_callback(msg); });
+    } else {
+      sub_goal_ = create_subscription<geometry_msgs::msg::PointStamped>(
+        "/way_point", qos,
+        [this](geometry_msgs::msg::PointStamped::ConstSharedPtr msg) { goal_callback(msg); });
+    }
 
     sub_speed_ = create_subscription<std_msgs::msg::Float32>(
       "/speed", qos,
@@ -204,6 +235,12 @@ private:
     goalBehindRange_ = get_parameter("goalBehindRange").as_double();
     goalX_ = get_parameter("goalX").as_double();
     goalY_ = get_parameter("goalY").as_double();
+
+    global_frame_id_ = get_parameter("global_frame_id").as_string();
+    use_planned_path_ = get_parameter("use_planned_path").as_bool();
+    use_laser_scan_ = get_parameter("use_laser_scan").as_bool();
+    waypoint_lookahead_ = get_parameter("waypoint_lookahead").as_double();
+    waypoint_tolerance_ = get_parameter("waypoint_tolerance").as_double();
 
     // Init autonomy speed
     if (autonomyMode_) {
@@ -398,8 +435,26 @@ private:
   {
     if (useTerrainAnalysis_) return;
 
-    laserCloud_->clear();
-    pcl::fromROSMsg(*laserCloud2, *laserCloud_);
+    // TF to global frame if needed
+    if (!laserCloud2->header.frame_id.empty() &&
+        laserCloud2->header.frame_id != global_frame_id_) {
+      try {
+        auto transform = tf_buffer_->lookupTransform(
+          global_frame_id_, laserCloud2->header.frame_id, laserCloud2->header.stamp,
+          rclcpp::Duration::from_seconds(0.1));
+        sensor_msgs::msg::PointCloud2 pc2_transformed;
+        tf2::doTransform(*laserCloud2, pc2_transformed, transform);
+        pc2_transformed.header.frame_id = global_frame_id_;
+        laserCloud_->clear();
+        pcl::fromROSMsg(pc2_transformed, *laserCloud_);
+      } catch (tf2::TransformException & e) {
+        RCLCPP_DEBUG(get_logger(), "laserCloud TF failed: %s", e.what());
+        return;
+      }
+    } else {
+      laserCloud_->clear();
+      pcl::fromROSMsg(*laserCloud2, *laserCloud_);
+    }
 
     pcl::PointXYZI point;
     laserCloudCrop_->clear();
@@ -469,6 +524,101 @@ private:
   {
     goalX_ = goal->point.x;
     goalY_ = goal->point.y;
+  }
+
+  // ---- LaserScan → PointCloud2 conversion with TF ----
+
+  void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
+  {
+    if (useTerrainAnalysis_) return;
+
+    int num_points = static_cast<int>(scan->ranges.size());
+    if (num_points == 0) return;
+
+    // Build PointCloud2 in scan frame (x forward, y left, z up)
+    sensor_msgs::msg::PointCloud2 pc2;
+    pc2.header = scan->header;
+    pc2.height = 1;
+    pc2.is_dense = false;
+
+    pc2.fields.resize(4);
+    pc2.fields[0].name = "x"; pc2.fields[0].offset = 0;
+    pc2.fields[0].datatype = sensor_msgs::msg::PointField::FLOAT32; pc2.fields[0].count = 1;
+    pc2.fields[1].name = "y"; pc2.fields[1].offset = 4;
+    pc2.fields[1].datatype = sensor_msgs::msg::PointField::FLOAT32; pc2.fields[1].count = 1;
+    pc2.fields[2].name = "z"; pc2.fields[2].offset = 8;
+    pc2.fields[2].datatype = sensor_msgs::msg::PointField::FLOAT32; pc2.fields[2].count = 1;
+    pc2.fields[3].name = "intensity"; pc2.fields[3].offset = 12;
+    pc2.fields[3].datatype = sensor_msgs::msg::PointField::FLOAT32; pc2.fields[3].count = 1;
+    pc2.point_step = 16;
+    pc2.row_step = pc2.point_step * num_points;
+    pc2.width = num_points;
+
+    std::vector<float> data(num_points * 4, 0.0f);
+    float angle = scan->angle_min;
+    int valid = 0;
+    for (int i = 0; i < num_points; i++) {
+      float r = scan->ranges[i];
+      if (scan->range_min < r && r < scan->range_max) {
+        data[valid * 4 + 0] = r * std::cos(angle);
+        data[valid * 4 + 1] = r * std::sin(angle);
+        data[valid * 4 + 2] = 0.0f;
+        data[valid * 4 + 3] = 1.0f;  // obstacle intensity
+        valid++;
+      }
+      angle += scan->angle_increment;
+    }
+    pc2.width = valid;
+    pc2.row_step = pc2.point_step * valid;
+    pc2.data.resize(valid * 16);
+    std::memcpy(pc2.data.data(), data.data(), valid * 16);
+
+    if (valid == 0) return;
+
+    // TF to global frame
+    std::string scan_frame = scan->header.frame_id;
+    if (scan_frame.empty()) scan_frame = "lidar_link";
+
+    try {
+      auto transform = tf_buffer_->lookupTransform(
+        global_frame_id_, scan_frame, scan->header.stamp,
+        rclcpp::Duration::from_seconds(0.1));
+      sensor_msgs::msg::PointCloud2 pc2_transformed;
+      tf2::doTransform(pc2, pc2_transformed, transform);
+      pc2_transformed.header.frame_id = global_frame_id_;
+      auto pc2_ptr = std::make_shared<sensor_msgs::msg::PointCloud2>(std::move(pc2_transformed));
+      laser_cloud_callback(pc2_ptr);
+    } catch (tf2::TransformException & e) {
+      RCLCPP_DEBUG(get_logger(), "scan TF failed: %s", e.what());
+    }
+  }
+
+  // ---- /planned_path with waypoint management ----
+
+  void planned_path_callback(const nav_msgs::msg::Path::ConstSharedPtr path)
+  {
+    if (path->poses.empty()) {
+      RCLCPP_WARN(get_logger(), "Received empty planned path");
+      return;
+    }
+    planned_waypoints_.clear();
+    for (const auto & pose : path->poses) {
+      planned_waypoints_.emplace_back(
+        pose.pose.position.x,
+        pose.pose.position.y,
+        pose.pose.position.z);
+    }
+    current_wp_idx_ = 0;
+    RCLCPP_INFO(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
+  }
+
+  void start_navigation_callback(const std_msgs::msg::Bool::ConstSharedPtr msg)
+  {
+    if (msg->data && !planned_waypoints_.empty()) {
+      navigating_ = true;
+      current_wp_idx_ = 0;
+      RCLCPP_INFO(get_logger(), "Navigation started");
+    }
   }
 
   void speed_callback(const std_msgs::msg::Float32::ConstSharedPtr speed)
@@ -649,6 +799,47 @@ private:
     if (rCount >= surPointThre_) block_msg.data += 16;
     if (lCount >= surPointThre_) block_msg.data += 32;
     pub_sur_block_->publish(block_msg);
+
+    // --- Waypoint management from /planned_path ---
+    if (use_planned_path_ && navigating_ && !planned_waypoints_.empty()) {
+      // Find lookahead waypoint
+      int target_idx = static_cast<int>(current_wp_idx_);
+      for (size_t i = current_wp_idx_; i < planned_waypoints_.size(); i++) {
+        double wx = std::get<0>(planned_waypoints_[i]);
+        double wy = std::get<1>(planned_waypoints_[i]);
+        double dist = std::hypot(wx - vehicleX_, wy - vehicleY_);
+        if (dist > waypoint_lookahead_) {
+          target_idx = static_cast<int>(i);
+          break;
+        }
+        target_idx = static_cast<int>(i);
+      }
+      goalX_ = std::get<0>(planned_waypoints_[target_idx]);
+      goalY_ = std::get<1>(planned_waypoints_[target_idx]);
+
+      // Advance reached waypoints
+      while (current_wp_idx_ < planned_waypoints_.size() - 1) {
+        double wx = std::get<0>(planned_waypoints_[current_wp_idx_]);
+        double wy = std::get<1>(planned_waypoints_[current_wp_idx_]);
+        double dist = std::hypot(wx - vehicleX_, wy - vehicleY_);
+        if (dist < waypoint_tolerance_) {
+          current_wp_idx_++;
+        } else {
+          break;
+        }
+      }
+
+      // Check final goal reached
+      if (current_wp_idx_ >= planned_waypoints_.size() - 1) {
+        double wx = std::get<0>(planned_waypoints_.back());
+        double wy = std::get<1>(planned_waypoints_.back());
+        double dist = std::hypot(wx - vehicleX_, wy - vehicleY_);
+        if (dist < waypoint_tolerance_) {
+          navigating_ = false;
+          RCLCPP_INFO(get_logger(), "Navigation complete - goal reached");
+        }
+      }
+    }
 
     // --- Determine joyDir and goal ---
     float pathRange = adjacentRange_;
@@ -998,6 +1189,13 @@ private:
   double goalClearRange_, goalBehindRange_;
   double goalX_, goalY_;
 
+  // New params for TF / input configuration
+  std::string global_frame_id_;
+  bool use_planned_path_;
+  bool use_laser_scan_;
+  double waypoint_lookahead_;
+  double waypoint_tolerance_;
+
   // ---- state ----
   float joySpeed_ = 0, joySpeedRaw_ = 0, joyDir_ = 0;
   float vehicleX_ = 0, vehicleY_ = 0, vehicleZ_ = 0;
@@ -1006,6 +1204,11 @@ private:
   double freezeStartTime_ = 0;
   int freezeStatus_ = 0;
   bool newLaserCloud_ = false, newTerrainCloud_ = false;
+
+  // /planned_path waypoint management
+  std::vector<std::tuple<double, double, double>> planned_waypoints_;
+  size_t current_wp_idx_ = 0;
+  bool navigating_ = false;
 
   // ---- path data ----
   pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths_[GROUP_NUM];
@@ -1035,10 +1238,13 @@ private:
 
   // ---- pub/sub ----
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odometry_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_scan_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_laser_cloud_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_terrain_cloud_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_joystick_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_goal_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_planned_path_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_start_nav_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_speed_;
   rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr sub_boundary_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_added_obstacles_;
@@ -1050,6 +1256,10 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_free_paths_;
 
   rclcpp::TimerBase::SharedPtr process_timer_;
+
+  // TF
+  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
 };
 
 }  // namespace local_planner

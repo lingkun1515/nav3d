@@ -9,7 +9,8 @@
 #include "sensor_msgs/msg/joy.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/int8.hpp"
-#include "geometry_msgs/msg/twist_stamped.hpp"
+#include "std_msgs/msg/bool.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 
 #include "tf2/transform_datatypes.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
@@ -111,6 +112,10 @@ private:
       "/stop", qos,
       [this](std_msgs::msg::Int8::ConstSharedPtr msg) { stop_callback(msg); });
 
+    sub_stop_nav_ = create_subscription<std_msgs::msg::Bool>(
+      "/stop_navigation", qos,
+      [this](std_msgs::msg::Bool::ConstSharedPtr msg) { stop_navigation_callback(msg); });
+
     sub_slow_down_ = create_subscription<std_msgs::msg::Int8>(
       "/slow_down", qos,
       [this](std_msgs::msg::Int8::ConstSharedPtr msg) { slow_down_callback(msg); });
@@ -119,7 +124,7 @@ private:
       "/surrounding_block", qos,
       [this](std_msgs::msg::Int8::ConstSharedPtr msg) { sur_block_callback(msg); });
 
-    pub_cmd_vel_ = create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel", qos);
+    pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", qos);
   }
 
   void read_params()
@@ -252,6 +257,13 @@ private:
     safety_stop_ = stop->data;
   }
 
+  void stop_navigation_callback(const std_msgs::msg::Bool::ConstSharedPtr msg)
+  {
+    if (msg->data) {
+      safety_stop_ = 1;
+    }
+  }
+
   void slow_down_callback(const std_msgs::msg::Int8::ConstSharedPtr slow)
   {
     slow_down_ = slow->data;
@@ -374,44 +386,42 @@ private:
 
     pub_skip_count_--;
     if (pub_skip_count_ < 0) {
-      auto cmd_vel = geometry_msgs::msg::TwistStamped();
-      cmd_vel.header.stamp = rclcpp::Time(static_cast<uint64_t>(odom_time_ * 1e9));
-      cmd_vel.header.frame_id = "vehicle";
-      cmd_vel.twist.linear.x = 0;
-      cmd_vel.twist.linear.y = 0;
-      cmd_vel.twist.angular.z = vehicleYawRate;
+      auto cmd_vel = geometry_msgs::msg::Twist();
+      cmd_vel.linear.x = 0;
+      cmd_vel.linear.y = 0;
+      cmd_vel.angular.z = vehicleYawRate;
 
       if (std::abs(vehicle_speed_) > max_accel_ / 100.0) {
         if (omni_dir_goal_thre_ > 0) {
-          cmd_vel.twist.linear.x = std::cos(dirDiff) * vehicle_speed_;
-          cmd_vel.twist.linear.y = -std::sin(dirDiff) * vehicle_speed_;
+          cmd_vel.linear.x = std::cos(dirDiff) * vehicle_speed_;
+          cmd_vel.linear.y = -std::sin(dirDiff) * vehicle_speed_;
         } else {
-          cmd_vel.twist.linear.x = vehicle_speed_;
+          cmd_vel.linear.x = vehicle_speed_;
         }
       } else {
         if (omni_dir_goal_thre_ > 0 && use_side_avoid_) {
           if (vehicleYawRate < 0 && (bl_block_ || fr_block_)) {
-            cmd_vel.twist.angular.z = 0;
+            cmd_vel.angular.z = 0;
             if (bl_block_ && !r_block_) {
-              cmd_vel.twist.linear.y = -max_speed_ / 2.0;
+              cmd_vel.linear.y = -max_speed_ / 2.0;
             } else if (fr_block_ && !l_block_) {
-              cmd_vel.twist.linear.y = max_speed_ / 2.0;
+              cmd_vel.linear.y = max_speed_ / 2.0;
             }
           } else if (vehicleYawRate > 0 && (br_block_ || fl_block_)) {
-            cmd_vel.twist.angular.z = 0;
+            cmd_vel.angular.z = 0;
             if (fl_block_ && !r_block_) {
-              cmd_vel.twist.linear.y = -max_speed_ / 2.0;
+              cmd_vel.linear.y = -max_speed_ / 2.0;
             } else if (br_block_ && !l_block_) {
-              cmd_vel.twist.linear.y = max_speed_ / 2.0;
+              cmd_vel.linear.y = max_speed_ / 2.0;
             }
           }
         }
       }
 
       if (manual_mode_) {
-        cmd_vel.twist.linear.x = max_speed_ * joy_manual_fwd_;
-        if (omni_dir_goal_thre_ > 0) cmd_vel.twist.linear.y = max_speed_ / 2.0 * joy_manual_left_;
-        cmd_vel.twist.angular.z = max_yaw_rate_ * PI / 180.0 * joy_manual_yaw_;
+        cmd_vel.linear.x = max_speed_ * joy_manual_fwd_;
+        if (omni_dir_goal_thre_ > 0) cmd_vel.linear.y = max_speed_ / 2.0 * joy_manual_left_;
+        cmd_vel.angular.z = max_yaw_rate_ * PI / 180.0 * joy_manual_yaw_;
       }
 
       pub_cmd_vel_->publish(cmd_vel);
@@ -426,13 +436,13 @@ private:
   }
 
 #ifdef SERIAL_ENABLED
-  void write_serial(const geometry_msgs::msg::TwistStamped & cmd_vel)
+  void write_serial(const geometry_msgs::msg::Twist & cmd_vel)
   {
     if (serial_open_) {
       float buffer[3];
-      buffer[0] = static_cast<float>(cmd_vel.twist.linear.x);
-      buffer[1] = static_cast<float>(cmd_vel.twist.linear.y);
-      buffer[2] = static_cast<float>(cmd_vel.twist.angular.z);
+      buffer[0] = static_cast<float>(cmd_vel.linear.x);
+      buffer[1] = static_cast<float>(cmd_vel.linear.y);
+      buffer[2] = static_cast<float>(cmd_vel.angular.z);
 
       size_t size = sizeof(float);
       uint8_t serial_buffer[3 * sizeof(float) + 1];
@@ -527,10 +537,11 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_joystick_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_speed_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_stop_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_stop_nav_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_slow_down_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_sur_block_;
 
-  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr pub_cmd_vel_;
+  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
 
   rclcpp::TimerBase::SharedPtr process_timer_;
 };

@@ -1,14 +1,12 @@
 """
-Full navigation stack launch:
-  Gazebo sim (auto-generates world from PCD) + octo_planner
-  + localPlanner (C++) + pathFollower (C++) + rosbridge
+Full navigation stack with local_planner (C++ algorithm nodes).
+
+This is the same as navigation.launch.py — the "full" pipeline is now the default.
+Kept for backwards compatibility.
 
 End-to-end flow:
   Web UI  /goal_pose  octo_planner  /planned_path  localPlanner (waypoint mgmt + TF)
           pathFollower  /cmd_vel (Twist)  Gazebo robot
-
-PCD  Gazebo world generation is automatic when pcd_file is provided.
-No Python relay nodes  everything closed in C++ algorithm packages.
 """
 import os
 import sys
@@ -18,7 +16,7 @@ from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                             OpaqueFunction)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -38,7 +36,6 @@ def generate_launch_description():
     pcd_to_world_script = os.path.join(sim_share, 'scripts', 'pcd_to_world.py')
     gazebo_launch_file = os.path.join(sim_share, 'launch', 'gazebo.launch.py')
 
-    # Try to find octo_planner
     try:
         planner_share = get_package_share_directory('octo_planner')
         planner_launch = os.path.join(planner_share, 'launch', 'planner.launch.py')
@@ -46,11 +43,7 @@ def generate_launch_description():
     except Exception:
         has_planner = False
 
-    # ----------------------------------------------------------------
-    # OpaqueFunction: conditionally generate world from PCD, then launch Gazebo
-    # ----------------------------------------------------------------
     def _setup_gazebo(context):
-        """Resolve pcd_file and return actions for Gazebo launch."""
         plc = context.perform_substitution(pcd_file)
         utc = context.perform_substitution(use_sim_time)
 
@@ -85,7 +78,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world',
             default_value=empty_world,
-            description='Gazebo world file (auto-generated from pcd_file if provided)',
+            description='Gazebo world file',
         ),
         DeclareLaunchArgument(
             'pcd_file', default_value='',
@@ -93,10 +86,8 @@ def generate_launch_description():
         ),
     ])
 
-    # 1. Gazebo + robot (conditional: empty or from PCD)
     ld.add_action(OpaqueFunction(function=_setup_gazebo))
 
-    # 2. octo_planner (if available)
     if has_planner:
         ld.add_action(TimerAction(
             period=2.0,
@@ -111,7 +102,6 @@ def generate_launch_description():
             ]
         ))
 
-    # 3. localPlanner + pathFollower (C++ algorithm nodes)
     ld.add_action(TimerAction(
         period=3.5,
         actions=[
@@ -153,7 +143,6 @@ def generate_launch_description():
         ]
     ))
 
-    # 4. ROSBridge for Web UI
     ld.add_action(Node(
         package='rosbridge_server',
         executable='rosbridge_websocket',

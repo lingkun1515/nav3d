@@ -356,7 +356,12 @@ function setPlannedPath(msg) {
   const pts = msg.poses.map(p => new THREE.Vector3(p.pose.position.x, p.pose.position.y, p.pose.position.z));
   const curve = new THREE.CatmullRomCurve3(pts);
   const tubeGeo = new THREE.TubeGeometry(curve, Math.max(20, pts.length * 2), 0.04, 8, false);
-  const tubeMat = new THREE.MeshStandardMaterial({ color: 0xab47bc, roughness: 0.3 });
+  const tubeMat = new THREE.MeshStandardMaterial({
+    color: 0x00e5ff,
+    emissive: 0x00e5ff,
+    emissiveIntensity: 0.5,
+    roughness: 0.2
+  });
   pathGroup.add(new THREE.Mesh(tubeGeo, tubeMat));
 
   // Show navigation confirm if in navigate mode

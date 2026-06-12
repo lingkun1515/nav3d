@@ -58,6 +58,13 @@ localPlanner:
     goalX: 0.0
     goalY: 0.0
 
+    # TF / input configuration
+    global_frame_id: "odom"
+    use_planned_path: false
+    use_laser_scan: false
+    waypoint_lookahead: 2.5
+    waypoint_tolerance: 0.5
+
 pathFollower:
   ros__parameters:
     # Hardware

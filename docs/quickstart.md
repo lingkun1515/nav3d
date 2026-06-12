@@ -10,7 +10,9 @@
 
 ```bash
 # 安装 ROS 依赖（如未安装）
-sudo apt install ros-humble-rosbridge-server ros-humble-octomap-msgs liboctomap-dev libpcl-all-dev
+sudo apt install ros-humble-rosbridge-server ros-humble-xacro \
+  ros-humble-gazebo-ros-pkgs ros-humble-robot-state-publisher \
+  ros-humble-octomap-msgs liboctomap-dev libpcl-all-dev
 ```
 
 ## 编译
@@ -174,6 +176,22 @@ ros2 topic echo /planned_path --once
 | 规划失败 | 确认起终点在可通行区域内；尝试增大 `snap_search_radius_cells` |
 | 编译报错找不到 octomap | `sudo apt install liboctomap-dev ros-humble-octomap-msgs` |
 
+## 仿真闭环导航
+
+一键启动完整仿真导航链：
+
+```bash
+source /opt/ros/humble/setup.bash && source install/setup.bash
+
+# 带 PCD 地图（自动生成 Gazebo 障碍物场景）
+ros2 launch simulation navigation.launch.py \
+  pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
+
+# 空地测试（无 PCD）
+ros2 launch simulation navigation.launch.py
+```
+
 ## 下一步
 
 - [全闭环导航调试指南](full_navigation_guide.md) — 在 Gazebo 仿真中运行完整的导航闭环（全局规划 + 局部避障 + 速度控制）
+- [参数参考手册](params_reference.md) — 全部 ROS 参数详细说明
