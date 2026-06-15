@@ -41,7 +41,7 @@ Thumbs.db
 *.pcd
 *.bt
 *.ot
-src/simulation/worlds/from_pcd.world
+src/simulation/worlds/from_bt.world
 
 # Claude Code
 .claude/

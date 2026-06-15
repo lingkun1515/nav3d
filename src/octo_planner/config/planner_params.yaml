@@ -1,7 +1,6 @@
 octo_planner_node:
   ros__parameters:
-    # Map loading
-    pcd_file: ""
+    # Map loading (pcd_file set by launch, not here)
     frame_id: "map"
 
     # Converter parameters

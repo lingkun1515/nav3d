@@ -20,7 +20,7 @@ Dog3DNav/
 │   ├── simulation/      # Gazebo 仿真环境
 │   └── slam/            # 建图定位（git submodule）
 ├── web/                 # Web 前端交互页面（Three.js + ROSBridge）
-├── maps/                # 地图预处理工具
+├── maps/                # 地图预处理工具（路径: src/bringup/maps/）
 └── docs/                # 项目文档
 ```
 

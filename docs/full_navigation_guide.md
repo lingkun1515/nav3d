@@ -36,7 +36,7 @@ source install/setup.bash
 
 ```bash
 ros2 launch bringup navigation.launch.py \
-  pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
+  pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd
 ```
 
 此命令同时启动：Gazebo（自动从 PCD 生成世界场景）+ octo_planner + localPlanner + pathFollower + rosbridge + RViz2。
@@ -58,11 +58,11 @@ ros2 launch bringup navigation.launch.py launch_rviz:=false
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `pcd_file` | `""` | 地图文件路径（格式详见 quickstart） |
+| `map_file` | 自动检测 | 地图文件路径（格式详见 quickstart），默认 src/bringup/maps/map_nav3d.bt |
 | `launch_rviz` | `true` | 是否启动 RViz2（使用 `bringup/config/navigation.rviz`） |
 | `use_sim_time` | `true` | 使用仿真时间 |
 
-首次提供 `pcd_file` 时自动执行 `pcd_to_world` 生成 `from_pcd.world`（缓存在 `worlds/` 目录），后续启动直接复用。删除 `from_pcd.world` 可强制重新生成。
+首次提供 `map_file` 时自动执行 `bt_to_world` 生成 `from_bt.world`（缓存在 `worlds/` 目录），后续启动直接复用。删除 `from_bt.world` 可强制重新生成。
 
 ### 4.2 分步启动（调试用）
 
@@ -74,7 +74,7 @@ ros2 launch simulation gazebo.launch.py
 
 # 终端 2: 全局规划器
 ros2 run octo_planner octo_planner_node --ros-args \
-  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd \
+  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd \
   -p resolution:=0.2 -p robot_radius:=0.05
 
 # 终端 3: 局部规划 + 轨迹跟踪
@@ -85,25 +85,27 @@ ros2 run local_planner pathFollower --ros-args \
 ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 &
 ```
 
-### 4.3 使用 PCD 地图生成 Gazebo 场景（离线）
+### 4.3 使用 OctoMap 地图生成 Gazebo 场景（离线）
 
 也可以预先生成世界文件：
 
 ```bash
-# 离线生成带障碍物的 Gazebo 世界
-python3 src/simulation/scripts/pcd_to_world.py \
-  maps/building_map.pcd \
-  src/simulation/worlds/from_pcd.world \
+# 离线从 OctoMap .bt 生成带障碍物的 Gazebo 世界
+python3 src/simulation/scripts/bt_to_world.py \
+  src/bringup/maps/map_nav3d.bt \
+  src/simulation/worlds/from_bt.world \
   --resolution 0.3 --max-boxes 3000
 
 # 用生成的世界启动 Gazebo
 ros2 launch simulation gazebo.launch.py \
-  world:=$(ros2 pkg prefix simulation)/share/simulation/worlds/from_pcd.world
+  world:=$(ros2 pkg prefix simulation)/share/simulation/worlds/from_bt.world
 ```
 
-> 注意：`pcd_to_world.py` 默认去除最低 Z 层（地面），将剩余体素合并为碰撞 box。
+> 注意：`bt_to_world.py` 读取 `.bt` 占据体素，去除最低 Z 层（地面），将剩余体素合并为碰撞 box。
 > `--resolution 0.3` 控制体素大小（越小越精细），`--max-boxes 3000` 限制最大 box 数（按体积排序保留最大的）。
-> 使用 `navigation.launch.py` 时此步骤自动执行，生成结果缓存为 `from_pcd.world`。
+> 使用 `navigation.launch.py` 时此步骤自动执行，生成结果缓存为 `from_bt.world`。
+
+> 历史遗留：`src/simulation/scripts/pcd_to_world.py` 保留供 PCD→World 手动离线使用。
 
 ---
 
@@ -227,7 +229,7 @@ ros2 topic pub /way_point geometry_msgs/PointStamped \
 | 全局路径在 Gazebo 中不对齐 | 确认 PCD 地图与 Gazebo 世界坐标原点一致；检查 `map→odom` TF |
 | 里程计无数据 | 检查 Gazebo 是否正常运行；`ros2 topic hz /odom` |
 | 激光雷达无数据 | 确认 URDF 中 `lidar_link` 传感器配置正确；`ros2 topic hz /scan` |
-| 场景无障碍物 | 确认传入了 `pcd_file` 参数，launch 会自动生成世界；或手动运行 `pcd_to_world.py` |
+| 场景无障碍物 | 确认传入了 `pcd_file` 参数，launch 会自动生成世界；或手动运行 `bt_to_world.py` |
 | rosbridge 连不上 | 确认 9090 端口未被占用；检查防火墙 |
 
 ---

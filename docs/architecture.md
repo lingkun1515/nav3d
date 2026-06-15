@@ -35,7 +35,7 @@
 
 ## 模块详解
 
-### 1. 地图预处理 — `maps/map_preprocessor.py`
+### 1. 地图预处理 — `src/bringup/maps/map_preprocessor.py`
 
 **定位：** 离线工具，不参与在线导航。
 
@@ -47,12 +47,12 @@
 → 法向量统计墙面方向 → XY轴旋转对齐 → 平移原点 → [地面补全] → 输出PCD
 ```
 
-**关键输出：** 对齐后的 `building_map.pcd`，坐标系满足：
+**关键输出：** 对齐后的 `map_nav3d.pcd`，坐标系满足：
 - XY 平面平行于建筑墙面
 - Z 轴垂直于地面
 - 原点 = 地面中心点
 
-**与 octo_planner 的衔接：** 预处理后的 PCD 直接作为 `octo_planner_node` 的 `pcd_file` 参数加载。
+**与 octo_planner 的衔接：** 预处理后的 PCD 直接作为 `octo_planner_node` 的地图输入。首次加载自动生成 `.bt` 缓存，后续启动直接加载 `.bt`。
 
 ---
 
@@ -232,7 +232,7 @@
 SLAM原始点云
     │
     ▼
-map_preprocessor.py  ──→  building_map.pcd
+map_preprocessor.py  ──→  map_nav3d.pcd (位于 src/bringup/maps/)
 (对齐+降采样+补全)
 ```
 

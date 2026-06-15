@@ -10,10 +10,10 @@ Dog3DNav/
 │   ├── octo_planner/    # 全局3D路径规划器（ROS 2 package）
 │   ├── local_planner/   # 局部规划 + 实时避障 + waypoint following（ROS 2 package）
 │   ├── simulation/      # Gazebo 仿真包（差速轮小车 URDF + PCD→世界场景生成）
-│   ├── bringup/         # 启动配置汇总（launch 文件 + RViz2 配置）
+│   ├── bringup/         # 启动配置汇总（launch 文件 + RViz2 配置 + 地图文件）
 │   ├── embodied/        # 具身感知理解模块（预留，暂不开发）
 │   └── slam/            # 建图定位（git submodule，暂不管）
-├── maps/                # 地图预处理脚本
+├── maps/                # 地图预处理脚本（实际位置 src/bringup/maps/）
 ├── docs/                # 项目文档
 ├── web/                 # Web 前端交互页面
 └── docker/              # Docker 配置
@@ -84,7 +84,7 @@ ROS 2 package，提供仿真环境用于闭环导航调试。
 - 差速驱动小车 URDF（Xacro），含 Gazebo 插件（diff_drive + lidar + joint_states）
 - 发布里程计真值（`/odom`）、TF（odom→base_footprint→base_link）、激光扫描（`/scan`）
 - 接受 `/cmd_vel`（Twist）控制小车移动
-- pcd_to_world：PCD → Gazebo `.world` 离线转换（体素化 → 贪婪合并 → SDF box）。launch 文件在提供 `pcd_file` 参数时自动调用，结果缓存至 `worlds/from_pcd.world`（存在则直接复用）
+- bt_to_world：`.bt` → Gazebo `.world` 离线转换（读取占据体素 → 贪婪合并 → SDF box）。launch 文件自动调用，结果缓存至 `worlds/from_bt.world`（存在则直接复用）。旧版 `pcd_to_world.py` 保留供手动使用
 - nav\_bridge / waypoint\_follower 已删除：所有中继/控制逻辑已下沉到 localPlanner / pathFollower (C++)
 
 **启动方式：**
@@ -183,11 +183,12 @@ source install/setup.bash
 
 1. **C++ 优先**：所有部署运行的算法包必须用 C++。Python 仅允许用于简单测试脚本（如 launch 文件、单元测试、一次性数据预处理脚本）。杜绝用 Python 写中继节点（remap 可替代的话题转发、应下沉到 C++ 节点的逻辑转换等）。
 2. **代码位置**：功能应尽可能放入已有 C++ 节点（localPlanner / pathFollower），而非新增中继节点。新增 ROS 参数来控制行为切换。
+3. **禁止主动 commit**：除非用户明确要求 commit，否则永远不要执行 git commit。先改代码、验证、等用户确认再提交。
 
 ## 已确定设计决策
 
 1. **Web 通信方案**：rosbridge WebSocket（`ws://localhost:9090`），使用 roslib.min.js 客户端库
-2. **地图管理**：octo_planner 支持多格式输入与自动缓存（详见 quickstart）；预处理脚本 `maps/map_preprocessor.py` 负责对齐/降采样/补全
+2. **地图管理**：octo_planner 支持多格式输入与自动缓存（详见 quickstart）；预处理脚本 `src/bringup/maps/map_preprocessor.py` 负责对齐/降采样/补全
 3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
 
 ## 待解决
@@ -205,7 +206,7 @@ source install/setup.bash
 ```bash
 # 完整导航闭环（Gazebo + octo_planner + localPlanner + pathFollower + rosbridge + RViz2）
 # 提供 pcd_file 时自动生成 Gazebo 世界场景
-ros2 launch bringup navigation.launch.py pcd_file:=/home/lenovo/Projects/NavProject/Dog3DNav/maps/building_map.pcd
+ros2 launch bringup navigation.launch.py  # 自动加载 maps/map_nav3d.bt（首次从 PCD 转换并缓存，地图位于 src/bringup/maps/）
 
 # 无 PCD 时使用空地世界（仅测试运动控制）
 ros2 launch bringup navigation.launch.py

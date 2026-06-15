@@ -9,12 +9,20 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('octo_planner')
+    bringup_share = get_package_share_directory('bringup')
     default_params = os.path.join(pkg_share, 'config', 'planner_params.yaml')
+
+    # Maps bundled with bringup package
+    maps_dir = os.path.join(bringup_share, 'maps')
+    map_bt = os.path.join(maps_dir, 'map_nav3d.bt')
+    map_pcd = os.path.join(maps_dir, 'map_nav3d.pcd')
+    default_map = map_bt if os.path.exists(map_bt) else (
+        map_pcd if os.path.exists(map_pcd) else '')
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            'pcd_file', default_value='/home/lenovo/Projects/NavProject/Dog3DNav/maps/building_map.pcd',
-            description='Path to PCD map file'),
+            'pcd_file', default_value=default_map,
+            description='Map file path (.bt/.pcd/.ot/.world/.sdf)'),
 
         DeclareLaunchArgument(
             'params_file', default_value=default_params,

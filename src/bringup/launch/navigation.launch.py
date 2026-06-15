@@ -38,6 +38,13 @@ def generate_launch_description():
     pcd_file = LaunchConfiguration('pcd_file')
     launch_rviz = LaunchConfiguration('launch_rviz')
 
+    # Maps bundled with bringup package
+    maps_dir = os.path.join(bringup_share, 'maps')
+    map_bt = os.path.join(maps_dir, 'map_nav3d.bt')
+    map_pcd = os.path.join(maps_dir, 'map_nav3d.pcd')
+    default_map = map_bt if os.path.exists(map_bt) else (
+        map_pcd if os.path.exists(map_pcd) else '')
+
     empty_world = os.path.join(sim_share, 'worlds', 'empty.world')
     from_pcd_world = os.path.join(sim_share, 'worlds', 'from_pcd.world')
     pcd_to_world_script = os.path.join(sim_share, 'scripts', 'pcd_to_world.py')
@@ -79,8 +86,8 @@ def generate_launch_description():
             description='Gazebo world file',
         ),
         DeclareLaunchArgument(
-            'pcd_file', default_value='',
-            description='PCD map file for octo_planner and Gazebo world generation',
+            'pcd_file', default_value=default_map,
+            description='Map file (.bt/.pcd/.ot/.world/.sdf), default bringup/maps/map_nav3d.bt',
         ),
         DeclareLaunchArgument(
             'launch_rviz', default_value='true',

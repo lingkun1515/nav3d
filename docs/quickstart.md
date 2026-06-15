@@ -68,13 +68,13 @@ octo_planner 支持以下地图格式，通过文件扩展名自动检测加载�
 conda activate dimos
 
 # 仅坐标系校正（默认：对齐开、补全关、降采样关）
-python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd
+python3 src/bringup/maps/map_preprocessor.py <输入.pcd> maps/map_nav3d.pcd
 
 # 启用体素降采样（稀疏大场景推荐）
-python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd --voxel_size 0.1
+python3 src/bringup/maps/map_preprocessor.py <输入.pcd> maps/map_nav3d.pcd --voxel_size 0.1
 
 # 完整处理：对齐 + 补全 + 降采样 + 预览
-python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd \
+python3 src/bringup/maps/map_preprocessor.py <输入.pcd> maps/map_nav3d.pcd \
     --voxel_size 0.1 --infill --visualize
 ```
 
@@ -92,9 +92,9 @@ python3 maps/map_preprocessor.py <输入.pcd> maps/building_map.pcd \
 将 jie_3d_nav 的 NPZ 地图包转为 `.bt` 格式后可直接加载：
 
 ```bash
-python3 maps/npz_to_bt.py <地图包>/octomap_msg.npz maps/map.bt
+python3 src/bringup/maps/npz_to_bt.py <地图包>/octomap_msg.npz maps/map.bt
 # 或直接指定包目录
-python3 maps/npz_to_bt.py --package-dir <地图包目录> maps/map.bt
+python3 src/bringup/maps/npz_to_bt.py --package-dir <地图包目录> maps/map.bt
 ```
 
 ## 启动系统
@@ -112,7 +112,7 @@ ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 ros2 run octo_planner octo_planner_node --ros-args \
-  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd \
+  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd \
   -p resolution:=0.2 \
   -p robot_radius:=0.05
 
@@ -131,7 +131,7 @@ ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 &
 
 # 启动 octo_planner
 ros2 run octo_planner octo_planner_node --ros-args \
-  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd \
+  -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd \
   -p resolution:=0.2 -p robot_radius:=0.05 &
 
 # 启动 Web 服务
@@ -143,7 +143,7 @@ cd web && python3 -m http.server 8080 &
 ```bash
 source /opt/ros/humble/setup.bash && source install/setup.bash
 ros2 launch octo_planner planner.launch.py \
-  pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
+  pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd
 
 # 另开终端启动 Web
 cd web && python3 -m http.server 8080
