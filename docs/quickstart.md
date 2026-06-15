@@ -65,8 +65,6 @@ octo_planner 支持以下地图格式，通过文件扩展名自动检测加载�
 将原始 SLAM 点云转为对齐后的导航地图：
 
 ```bash
-conda activate dimos
-
 # 仅坐标系校正（默认：对齐开、补全关、降采样关）
 python3 src/bringup/maps/map_preprocessor.py <输入.pcd> maps/map_nav3d.pcd
 
@@ -86,16 +84,6 @@ python3 src/bringup/maps/map_preprocessor.py <输入.pcd> maps/map_nav3d.pcd \
 | `--voxel_size N` | 禁用 | 体素降采样网格大小 (m) |
 
 处理步骤：体素降采样（可选）→ RANSAC 地面提取 + 重力对齐 → 法向量统计墙面方向 → XY 旋转对齐 → 平移原点 → 地面补全（可选）。
-
-### jie_3d_nav NPZ 地图转换
-
-将 jie_3d_nav 的 NPZ 地图包转为 `.bt` 格式后可直接加载：
-
-```bash
-python3 src/bringup/maps/npz_to_bt.py <地图包>/octomap_msg.npz maps/map.bt
-# 或直接指定包目录
-python3 src/bringup/maps/npz_to_bt.py --package-dir <地图包目录> maps/map.bt
-```
 
 ## 启动系统
 

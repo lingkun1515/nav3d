@@ -1081,7 +1081,7 @@ private:
         }
         path.poses.resize(validCount);
         path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        path.header.frame_id = "vehicle";
+        path.header.frame_id = "base_link";
         pub_path_->publish(path);
 
         // Free paths visualization
@@ -1122,7 +1122,7 @@ private:
         sensor_msgs::msg::PointCloud2 freePaths2;
         pcl::toROSMsg(*freePaths_, freePaths2);
         freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        freePaths2.header.frame_id = "vehicle";
+        freePaths2.header.frame_id = "base_link";
         pub_free_paths_->publish(freePaths2);
 
         pathFound = true;
@@ -1148,14 +1148,14 @@ private:
       path.poses[0].pose.position.y = 0;
       path.poses[0].pose.position.z = 0;
       path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-      path.header.frame_id = "vehicle";
+      path.header.frame_id = "base_link";
       pub_path_->publish(path);
 
       freePaths_->clear();
       sensor_msgs::msg::PointCloud2 freePaths2;
       pcl::toROSMsg(*freePaths_, freePaths2);
       freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-      freePaths2.header.frame_id = "vehicle";
+      freePaths2.header.frame_id = "base_link";
       pub_free_paths_->publish(freePaths2);
     }
   }

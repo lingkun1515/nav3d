@@ -15,6 +15,7 @@
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/trigger.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "octomap_msgs/msg/octomap.hpp"
 #include "octomap_msgs/conversions.h"
@@ -106,6 +107,10 @@ private:
     goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
       "/goal_pose", qos_reliable,
       [this](geometry_msgs::msg::PoseStamped::SharedPtr msg) { on_goal_pose(msg); });
+
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/odom", rclcpp::QoS(5).best_effort(),
+      [this](nav_msgs::msg::Odometry::SharedPtr msg) { on_odom(msg); });
 
     pcd_cmd_sub_ = create_subscription<std_msgs::msg::String>(
       "/pcd_file_cmd", rclcpp::QoS(1).reliable(),
@@ -332,7 +337,8 @@ private:
     planner_->setOctomap(octree_);
 
     map_ready_ = true;
-    has_start_ = false;
+    has_explicit_start_ = false;
+    has_odom_ = false;
     has_goal_ = false;
 
     publish_octomap();
@@ -349,9 +355,15 @@ private:
     start_point_.x = msg->point.x;
     start_point_.y = msg->point.y;
     start_point_.z = msg->point.z;
-    has_start_ = true;
-    RCLCPP_INFO(get_logger(), "Start set: (%.2f, %.2f, %.2f)",
+    has_explicit_start_ = true;
+    RCLCPP_INFO(get_logger(), "Start set (explicit): (%.2f, %.2f, %.2f)",
                 start_point_.x, start_point_.y, start_point_.z);
+  }
+
+  void on_odom(nav_msgs::msg::Odometry::SharedPtr msg)
+  {
+    latest_odom_ = *msg;
+    has_odom_ = true;
   }
 
   void on_goal(geometry_msgs::msg::PointStamped::SharedPtr msg)
@@ -378,18 +390,34 @@ private:
 
   void try_plan()
   {
-    if (!map_ready_ || !has_start_ || !has_goal_) {
-      if (!map_ready_) RCLCPP_WARN(get_logger(), "Map not ready.");
-      if (!has_start_) RCLCPP_WARN(get_logger(), "Start not set.");
+    // Resolve start point: explicit /start_point takes priority, fallback to odometry
+    global_planner::PointPose start;
+    if (has_explicit_start_) {
+      start = start_point_;
+    } else if (has_odom_) {
+      const auto & p = latest_odom_.pose.pose.position;
+      start = {p.x, p.y, p.z};
+    } else {
+      RCLCPP_WARN(get_logger(), "Start not set (no /start_point, no /odom).");
       return;
     }
 
-    RCLCPP_INFO(get_logger(), "Planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)",
-                start_point_.x, start_point_.y, start_point_.z,
-                goal_point_.x, goal_point_.y, goal_point_.z);
+    if (!map_ready_) {
+      RCLCPP_WARN(get_logger(), "Map not ready.");
+      return;
+    }
+    if (!has_goal_) {
+      RCLCPP_WARN(get_logger(), "Goal not set.");
+      return;
+    }
+
+    RCLCPP_INFO(get_logger(), "Planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)%s",
+                start.x, start.y, start.z,
+                goal_point_.x, goal_point_.y, goal_point_.z,
+                has_explicit_start_ ? "" : " [from odom]");
 
     auto t0 = now();
-    planner_->makePlan(start_point_, goal_point_);
+    planner_->makePlan(start, goal_point_);
 
     std::vector<global_planner::PointPose> results;
     planner_->getPlannerResults(results);
@@ -587,10 +615,12 @@ private:
   std::shared_ptr<octomap::OcTree> octree_;
 
   bool map_ready_ = false;
-  bool has_start_ = false;
+  bool has_explicit_start_ = false;
+  bool has_odom_ = false;
   bool has_goal_ = false;
   global_planner::PointPose start_point_{};
   global_planner::PointPose goal_point_{};
+  nav_msgs::msg::Odometry latest_odom_;
 
   rclcpp::Publisher<octomap_msgs::msg::Octomap>::SharedPtr octomap_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr occupied_marker_pub_;
@@ -602,6 +632,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr start_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr goal_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pcd_cmd_sub_;
 
   rclcpp::TimerBase::SharedPtr republish_timer_;

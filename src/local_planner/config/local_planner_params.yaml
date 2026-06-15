@@ -59,7 +59,7 @@ localPlanner:
     goalY: 0.0
 
     # TF / input configuration
-    global_frame_id: "odom"
+    global_frame_id: "map"
     use_planned_path: false
     use_laser_scan: false
     waypoint_lookahead: 2.5

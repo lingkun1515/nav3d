@@ -7,7 +7,6 @@ install(DIRECTORY
   urdf
   worlds
   launch
-  config
   meshes
   DESTINATION share/${PROJECT_NAME}
 )

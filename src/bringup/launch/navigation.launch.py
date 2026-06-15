@@ -77,7 +77,7 @@ def generate_launch_description():
             description='Launch RViz2 with the navigation config',
         ),
         DeclareLaunchArgument(
-            'launch_sim', default_value='true',
+            'launch_sim', default_value='false',
             description='Launch Gazebo simulation (set false for real robot)',
         ),
         DeclareLaunchArgument('x', default_value='0.0', description='Robot initial X (m)'),
@@ -136,7 +136,7 @@ def generate_launch_description():
                     {'use_sim_time': use_sim_time},
                     {'use_laser_scan': False},
                     {'use_planned_path': True},
-                    {'global_frame_id': 'odom'},
+                    {'global_frame_id': 'map'},
                 ],
                 remappings=[
                     ('/state_estimation', '/odom'),

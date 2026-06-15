@@ -1,12 +1,10 @@
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, Command, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -25,8 +23,8 @@ def generate_launch_description():
             'world',
             default_value=os.path.join(
                 pkg_share, 'worlds', 
-                'empty.world'
-                # 'from_pcd.world'
+                # 'empty.world'
+                'map_nav3d.world'
             ),
             description='Gazebo world file'
         ),
@@ -82,24 +80,6 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Static TF: map -> odom.
-        # odom frame origin = robot spawn position (diff_drive ENCODER mode).
-        # Translate by spawn coords so map aligns with Gazebo world / PCD map origin.
-        Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            arguments=[
-                LaunchConfiguration('x'),
-                LaunchConfiguration('y'),
-                '0',
-                LaunchConfiguration('yaw'),
-                '0',
-                '0',
-                'map',
-                'odom',
-            ],
-            parameters=[{'use_sim_time': use_sim_time}],
-            output='screen',
-        ),
-
+        # TF tree: diff_drive (WORLD mode) publishes map→base_footprint directly.
+        # No static map→odom needed — odometry frame is now "map".
     ])

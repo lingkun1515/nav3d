@@ -64,17 +64,44 @@
 
 1. 启动时加载地图文件（多格式自动检测），转为 OctoMap（3D 占据栅格）
 2. 基于 OctoMap 构建可通行性 map：地面支撑检测、代价膨胀、禁行区标记
-3. 等待 Web 前端下发起点 `/start_point` 和终点 `/goal_point`
-4. 收到终点后触发 `GlobalPlanner::makePlan()`（3D A* 搜索）
+3. 等待 Web 前端下发起点 `/start_point` 和终点 `/goal_point`（或 `/goal_pose`）
+4. 收到终点后触发 `try_plan()`，满足全部三个条件才执行 `GlobalPlanner::makePlan()`（3D A* 搜索）
 5. 将规划结果 `/planned_path` 发送到 Web 前端展示
+
+**全局路径触发条件（`try_plan()`）：**
+
+`try_plan()` **仅**在收到终点话题（`/goal_point` 或 `/goal_pose`）时调用，不在收到起点时调用。规划执行需同时满足三个条件：
+
+| 条件 | 变量 | 满足方式 |
+|------|------|----------|
+| 地图已加载 | `map_ready_` | 启动时自动设为 true |
+| 起点可用 | `has_explicit_start_` 或 `has_odom_` | 显式：收到 `/start_point`；自动：收到 `/odom` 里程计 |
+| 终点已设置 | `has_goal_` | 收到 `/goal_point` 或 `/goal_pose` 后设为 true |
+
+**起点优先级：** 显式 `/start_point` > 里程计 `/odom` 自动位姿。如果用户发送过 `/start_point`，始终使用该显式起点；否则自动使用最新 `/odom` 位置作为起点。两者都没有时才报 WARN 跳过。
+
+**推荐用法：**
+```
+# 仿真场景：直接发目标即可，odom 自动提供起点
+ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.0, z: 0.0}}" --once
+
+# 需要指定起点时（如真实机器人初始位姿不准确）：
+ros2 topic pub /start_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 0.0, y: 0.0, z: 0.0}}" --once
+ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.0, z: 0.0}}" --once
+```
+
+**时序注意：** 如果先发终点、后里程计才就绪，`try_plan()` 会被跳过，需重新发送终点触发规划。
+
+`try_plan()` 返回空结果时，发布空路径到 `/planned_path`（日志 WARN: "Planning failed"）。
 
 **话题接口：**
 
 | 方向 | 话题 | 类型 | 说明 |
 |------|------|------|------|
-| 入 | `/start_point` | PointStamped | 起点(map帧) |
+| 入 | `/start_point` | PointStamped | 起点(map帧)，优先于 odom |
 | 入 | `/goal_point` | PointStamped | 终点(map帧) |
 | 入 | `/goal_pose` | PoseStamped | 终点(含朝向) |
+| 入 | `/odom` | Odometry | 里程计，自动作为起点（/start_point 未设时） |
 | 入 | `/pcd_file_cmd` | String | 动态切换地图文件 |
 | 出 | `/planned_path` | Path | 全局路径(map帧) |
 | 出 | `/octomap` | Octomap | 完整OctoMap(transient_local) |
