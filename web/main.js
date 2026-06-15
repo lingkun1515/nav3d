@@ -374,12 +374,35 @@ function setPlannedPath(msg) {
   log(`规划路径: ${msg.poses.length} 个航点, 长度 ${(pts.length > 1 ? curve.getLength().toFixed(1) : '0')} m`, 'ok');
 }
 
+// ===== Data Staleness =====
+const STALE_TF_MS = 3000;
+let lastDataTime = {
+  tf: 0,
+  get now() { return performance.now(); }
+};
+
+function markDataAge(key) { lastDataTime[key] = lastDataTime.now; }
+
+function checkStaleness() {
+  const n = lastDataTime.now;
+
+  if (lastDataTime.tf > 0 && n - lastDataTime.tf > STALE_TF_MS) {
+    tfState.clear();
+    lastDataTime.tf = 0;
+    tfFirstReceived = false;
+    poseFirstReceived = false;
+    updateRobotModel();
+    log('TF 数据超时，已清空位姿', 'warn');
+  }
+}
+
 // ===== TF System =====
 let tfFirstReceived = false;
 function normalizeFrame(f) { return f.startsWith('/') ? f.slice(1) : f; }
 
 function storeTransform(msg) {
   if (!msg.transforms) return;
+  markDataAge('tf');
   for (const t of msg.transforms) {
     const parent = normalizeFrame(t.header.frame_id);
     const child = normalizeFrame(t.child_frame_id);
@@ -1012,6 +1035,7 @@ window.addEventListener('resize', onResize);
 
 // ===== Animation Loop =====
 let robotUpdateCounter = 0;
+let stalenessCounter = 0;
 
 function animate() {
   requestAnimationFrame(animate);
@@ -1020,6 +1044,11 @@ function animate() {
   robotUpdateCounter++;
   if (robotUpdateCounter % 30 === 0) {
     updateRobotModel();
+  }
+
+  stalenessCounter++;
+  if (stalenessCounter % 120 === 0) {
+    checkStaleness();
   }
 
   renderer.render(scene, camera);

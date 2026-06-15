@@ -183,12 +183,12 @@ ros2 topic echo /planned_path --once
 ```bash
 source /opt/ros/humble/setup.bash && source install/setup.bash
 
-# 带 PCD 地图（自动生成 Gazebo 障碍物场景）
-ros2 launch simulation navigation.launch.py \
+# 带 PCD 地图（自动生成 Gazebo 障碍物场景，缓存为 from_pcd.world）
+ros2 launch bringup navigation.launch.py \
   pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
 
 # 空地测试（无 PCD）
-ros2 launch simulation navigation.launch.py
+ros2 launch bringup navigation.launch.py
 ```
 
 ## 下一步

@@ -3,46 +3,7 @@
 本文档是 [快速入门](quickstart.md) 的下一步，介绍如何在 Gazebo 仿真中运行完整的导航闭环：
 **Web 选点 → 全局规划 → 局部避障 → 速度控制 → 小车移动**。
 
----
-
-## 1. 系统架构总览
-
-```
-┌─────────┐    /goal_pose     ┌──────────────┐   /planned_path    ┌────────────────┐
-│ Web UI  │ ─────────────────▶│ octo_planner │───────────────────▶│  localPlanner  │
-│(选点导航)│                   │  (全局 A*)   │                    │(航点管理+避障) │
-└─────────┘                   └──────────────┘                    └───────┬────────┘
-     │                                                                   │
-     │ /tf, /odom                                               /path     │
-     │                                                                   ▼
-     │                                                           ┌──────────────┐
-     │                                                           │ pathFollower │
-     │                                                           │(pure-pursuit)│
-     │                                                           └──────┬───────┘
-     │                                                            /cmd_vel(Twist)
-     │                                                                   │
-     │  /tf (odom→base_link)     ┌──────────────┐                       ▼
-     │◀──────────────────────────│    Gazebo     │◀────────── diff_drive_robot
-     │                           │ (仿真物理引擎) │
-     │                           └──────────────┘
-     │                                    │
-     │                           /scan (LaserScan, 内部转PC2+TF)
-     │                                    │
-     │                                    ▼
-     │                            localPlanner 感知输入
-```
-
-### 数据流说明
-
-| 阶段 | 话题 | 类型 | 说明 |
-|------|------|------|------|
-| 全局目标 | `/goal_pose` | PoseStamped | Web 发布目标位姿 |
-| 全局路径 | `/planned_path` | Path | octo_planner 的 A* 路径（map 坐标系） |
-| 局部航点 | 内部管理 | - | localPlanner 从 /planned_path 提取 lookahead 航点 |
-| 里程计 | `/odom` | Odometry | Gazebo 差速驱动里程计真值，通过 remap→/state_estimation |
-| 激光扫描 | `/scan` | LaserScan | Gazebo 激光雷达，localPlanner 内部转 PointCloud2+TF→odom |
-| 局部路径 | `/path` | Path | localPlanner 选中的无碰格栅路径（vehicle 帧） |
-| 速度指令 | `/cmd_vel` | Twist | pathFollower 输出，直接驱动 Gazebo diff_drive |
+系统架构与模块详解参见 [系统架构](architecture.md)，本文不再重复。
 
 ---
 
@@ -74,18 +35,34 @@ source install/setup.bash
 ### 4.1 完整导航闭环（一键启动）
 
 ```bash
-ros2 launch simulation navigation.launch.py \
+ros2 launch bringup navigation.launch.py \
   pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd
 ```
 
-此命令同时启动：Gazebo（自动从 PCD 生成世界场景）+ octo_planner + localPlanner + pathFollower + rosbridge。
+此命令同时启动：Gazebo（自动从 PCD 生成世界场景）+ octo_planner + localPlanner + pathFollower + rosbridge + RViz2。
 所有逻辑均在 C++ 节点内闭环，无 Python 中继节点。
 
 若不需要障碍物场景（仅测试运动控制），省略 pcd_file 参数即可在空地启动：
 
 ```bash
-ros2 launch simulation navigation.launch.py
+ros2 launch bringup navigation.launch.py
 ```
+
+不启动 RViz2 时：
+
+```bash
+ros2 launch bringup navigation.launch.py launch_rviz:=false
+```
+
+**启动参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `pcd_file` | `""` | PCD 地图文件 |
+| `launch_rviz` | `true` | 是否启动 RViz2（使用 `bringup/config/navigation.rviz`） |
+| `use_sim_time` | `true` | 使用仿真时间 |
+
+首次提供 `pcd_file` 时自动执行 `pcd_to_world` 生成 `from_pcd.world`（缓存在 `worlds/` 目录），后续启动直接复用。删除 `from_pcd.world` 可强制重新生成。
 
 ### 4.2 分步启动（调试用）
 
@@ -117,7 +94,7 @@ ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 &
 python3 src/simulation/scripts/pcd_to_world.py \
   maps/building_map.pcd \
   src/simulation/worlds/from_pcd.world \
-  --resolution 0.2
+  --resolution 0.3 --max-boxes 3000
 
 # 用生成的世界启动 Gazebo
 ros2 launch simulation gazebo.launch.py \
@@ -125,8 +102,8 @@ ros2 launch simulation gazebo.launch.py \
 ```
 
 > 注意：`pcd_to_world.py` 默认去除最低 Z 层（地面），将剩余体素合并为碰撞 box。
-> `--max-boxes 5000` 限制最大 box 数，过大会影响 Gazebo 性能。
-> 使用 `navigation.launch.py` 时，此步骤自动执行，无需手动调用。
+> `--resolution 0.3` 控制体素大小（越小越精细），`--max-boxes 3000` 限制最大 box 数（按体积排序保留最大的）。
+> 使用 `navigation.launch.py` 时此步骤自动执行，生成结果缓存为 `from_pcd.world`。
 
 ---
 
@@ -180,14 +157,19 @@ ros2 launch simulation gazebo.launch.py \
 
 ### 7.1 RViz2 可视化
 
+一键启动时 RViz2 已自动打开，配置文件 `bringup/config/navigation.rviz` 预置了所有显示：
+
+- **TF** — map/odom/base_link/base_footprint/lidar_link 坐标系
+- **RobotModel** — 差速小车 3D 模型
+- **Odometry** — 里程计轨迹（箭头样式）
+- **GlobalPath** — `/planned_path`（青色）
+- **LocalPath** — `/path`（绿色）
+- **LaserScan** — `/scan`（红色点）
+- **OctoMap** 组 — Occupied/Traversable/Preblocked 体素 + CostCloud
+
+手动启动（如需）：
 ```bash
-rviz2
-# 手动添加：
-# - Path 显示 /planned_path (全局路径, 紫色)
-# - Path 显示 /path (局部路径, 绿色)
-# - LaserScan 显示 /scan (激光扫描)
-# - Odometry 显示 /odom (里程计)
-# - TF 显示坐标树
+rviz2 -d src/bringup/config/navigation.rviz
 ```
 
 ### 7.2 话题监控

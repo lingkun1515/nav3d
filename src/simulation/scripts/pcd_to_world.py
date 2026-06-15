@@ -276,7 +276,8 @@ def main():
     print(f"Merged into {len(boxes)} boxes")
 
     if len(boxes) > args.max_boxes:
-        print(f"Warning: truncating to {args.max_boxes} boxes")
+        print(f"Warning: truncating to {args.max_boxes} boxes (sorted by volume)")
+        boxes.sort(key=lambda b: b[3] * b[4] * b[5], reverse=True)
         boxes = boxes[:args.max_boxes]
 
     # Generate world

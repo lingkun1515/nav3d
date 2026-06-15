@@ -22,7 +22,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'world',
-            default_value=os.path.join(pkg_share, 'worlds', 'empty.world'),
+            default_value=os.path.join(
+                pkg_share, 'worlds', 
+                'empty.world'
+                # 'from_pcd.world'
+            ),
             description='Gazebo world file'
         ),
         DeclareLaunchArgument(
@@ -34,7 +38,7 @@ def generate_launch_description():
             'x', default_value='0.0', description='Robot initial X position'
         ),
         DeclareLaunchArgument(
-            'y', default_value='0.0', description='Robot initial Y position'
+            'y', default_value='-6.0', description='Robot initial Y position'
         ),
         DeclareLaunchArgument(
             'z', default_value='0.1', description='Robot initial Z position'
