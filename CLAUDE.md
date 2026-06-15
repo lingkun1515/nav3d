@@ -26,7 +26,7 @@ Dog3DNav/
 基于 OctoPlanner3D 库（`~/Projects/NavProject/OctoPlanner3D/`）封装的 ROS 2 节点。
 
 **核心能力：**
-- 加载预建 PCD 点云地图，转为 OctoMap（`Pcd2OctomapConverter`）
+- 多格式地图加载（`.pcd` / `.bt` / `.ot` / `.world` / `.sdf`）与自动缓存，详见 [quickstart](docs/quickstart.md)
 - 基于 OctoMap 的 3D A* 路径搜索（`GlobalPlanner`）
 - 可通行性分析：地面支撑检测、膨胀禁行区、代价地图
 
@@ -106,7 +106,7 @@ ament_cmake package，集中管理所有 launch 文件和 RViz2 配置，无 C++
 **启动参数：**
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `pcd_file` | `""` | PCD 地图文件，提供后自动生成 Gazebo 世界场景 |
+| `pcd_file` | `""` | 地图文件（支持 .pcd/.bt/.ot/.world/.sdf），提供后自动生成 Gazebo 世界场景 |
 | `launch_rviz` | `true` | 是否启动 RViz2 |
 | `use_sim_time` | `true` | 使用仿真时间 |
 
@@ -153,6 +153,15 @@ Git submodule，由外部仓库导入。当前状态：预留。
 | jie_octomap 参考 | `~/Projects/NavProject/jie_3d_nav/jie_octomap/` | Web可视化与地图管理参考实现 |
 | autonomy_stack local_planner | `~/Projects/NavProject/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/local_planner` | 局部规划移植源 |
 
+## 系统依赖
+
+| 包 | 用途 |
+|----|------|
+| `liboctomap-dev` | OctoMap 核心库 |
+| `libpcl-all-dev` | PCD 点云处理 |
+| `libtinyxml2-dev` | .world/.sdf XML 解析 |
+| `libeigen3-dev` | 线性代数（world_loader 姿态计算） |
+
 ## 构建与运行
 
 ```bash
@@ -178,7 +187,7 @@ source install/setup.bash
 ## 已确定设计决策
 
 1. **Web 通信方案**：rosbridge WebSocket（`ws://localhost:9090`），使用 roslib.min.js 客户端库
-2. **地图管理**：PCD 点云文件 → octo_planner 加载为 OctoMap；预处理脚本 `maps/map_preprocessor.py` 负责对齐/降采样/补全
+2. **地图管理**：octo_planner 支持多格式输入与自动缓存（详见 quickstart）；预处理脚本 `maps/map_preprocessor.py` 负责对齐/降采样/补全
 3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
 
 ## 待解决

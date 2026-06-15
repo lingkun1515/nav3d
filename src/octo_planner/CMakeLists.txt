@@ -19,6 +19,8 @@ find_package(visualization_msgs REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(octomap REQUIRED)
 find_package(PCL REQUIRED COMPONENTS io common)
+find_package(Eigen3 REQUIRED)
+find_library(TINYXML2_LIB tinyxml2 REQUIRED)
 
 # --- OctoPlanner3D external library integration ---
 set(OCTOPLANNER3D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/OctoPlanner3D")
@@ -64,12 +66,29 @@ target_link_libraries(OctoPlanner3D_Planner PUBLIC
 )
 set_target_properties(OctoPlanner3D_Planner PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# World (.world/.sdf) → OctoMap loader
+add_library(world_loader STATIC
+  src/world_loader.cpp
+)
+target_include_directories(world_loader PUBLIC
+  src
+  ${EIGEN3_INCLUDE_DIRS}
+  ${OCTOMAP_INCLUDE_DIRS}
+)
+target_link_libraries(world_loader PUBLIC
+  ${TINYXML2_LIB}
+  ${OCTOMAP_LIBRARIES}
+)
+set_target_properties(world_loader PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # --- Main ROS 2 node ---
 add_executable(octo_planner_node src/octo_planner_node.cpp)
 
 target_include_directories(octo_planner_node PRIVATE
   ${OCTOMAP_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+  src
 )
 
 ament_target_dependencies(octo_planner_node
@@ -86,6 +105,8 @@ ament_target_dependencies(octo_planner_node
 target_link_libraries(octo_planner_node
   OctoPlanner3D_Planner
   OctoPlanner3D_Octomap
+  world_loader
+  ${TINYXML2_LIB}
   ${OCTOMAP_LIBRARIES}
 )
 

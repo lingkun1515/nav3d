@@ -13,7 +13,7 @@
 
 | 参数 | 类型 | 默认 | 含义 |
 |------|------|------|------|
-| `pcd_file` | string | `""` | 预建 PCD 点云地图文件路径。空字符串表示启动时不加载，等待 `/pcd_file_cmd` 话题动态指定 |
+| `pcd_file` | string | `""` | 地图文件路径（多格式支持详见 quickstart）。空字符串表示启动时不加载，等待 `/pcd_file_cmd` 话题动态指定 |
 | `frame_id` | string | `"map"` | 全局固定坐标系名称，所有发布的话题（OctoMap、Markers、Path）的 `header.frame_id` |
 
 ### 1.2 PCD→OctoMap 转换
@@ -65,7 +65,14 @@
 | `radical_infill_clearance_m` | double | `1.0` | 上方清空距离 (m)。候选填充格正上方该距离内若无占据体素，则判定为可填充 |
 | `radical_infill_half_height_m` | double | `0.1` | 桥接搜索扁圆柱的半高 (m)。控制跨层搜索的 Z 向宽容度 |
 
-### 1.7 发布控制
+### 1.7 自动保存
+
+| 参数 | 类型 | 默认 | 含义 |
+|------|------|------|------|
+| `auto_save_bt` | bool | `true` | 是否在 PCD/World/OT 转换后自动保存 `.bt` 缓存（与源文件同目录同名）。二次启动时若 `.bt` 比源文件新则直接加载跳过转换 |
+| `world_xy_window_size_m` | double | `24.0` | .world/.sdf 加载时的 XY 平面裁剪窗口半边长 (m)。0 表示不裁剪，加载世界全部内容 |
+
+### 1.8 发布控制
 
 | 参数 | 类型 | 默认 | 含义 |
 |------|------|------|------|

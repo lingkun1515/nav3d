@@ -42,7 +42,7 @@ ros2 launch bringup navigation.launch.py \
 此命令同时启动：Gazebo（自动从 PCD 生成世界场景）+ octo_planner + localPlanner + pathFollower + rosbridge + RViz2。
 所有逻辑均在 C++ 节点内闭环，无 Python 中继节点。
 
-若不需要障碍物场景（仅测试运动控制），省略 pcd_file 参数即可在空地启动：
+若不需障碍物场景（仅测试运动控制），省略 pcd_file 参数即可在空地启动：
 
 ```bash
 ros2 launch bringup navigation.launch.py
@@ -58,7 +58,7 @@ ros2 launch bringup navigation.launch.py launch_rviz:=false
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `pcd_file` | `""` | PCD 地图文件 |
+| `pcd_file` | `""` | 地图文件路径（格式详见 quickstart） |
 | `launch_rviz` | `true` | 是否启动 RViz2（使用 `bringup/config/navigation.rviz`） |
 | `use_sim_time` | `true` | 使用仿真时间 |
 
@@ -75,7 +75,7 @@ ros2 launch simulation gazebo.launch.py
 # 终端 2: 全局规划器
 ros2 run octo_planner octo_planner_node --ros-args \
   -p pcd_file:=$HOME/Projects/NavProject/Dog3DNav/maps/building_map.pcd \
-  -p resolution:=0.2 -p robot_radius:=0.25
+  -p resolution:=0.2 -p robot_radius:=0.05
 
 # 终端 3: 局部规划 + 轨迹跟踪
 ros2 run local_planner localPlanner --ros-args \

@@ -62,7 +62,7 @@
 
 **工作逻辑：**
 
-1. 启动时加载 PCD，调用 `Pcd2OctomapConverter` 转为 OctoMap（3D 占据栅格）
+1. 启动时加载地图文件（多格式自动检测），转为 OctoMap（3D 占据栅格）
 2. 基于 OctoMap 构建可通行性 map：地面支撑检测、代价膨胀、禁行区标记
 3. 等待 Web 前端下发起点 `/start_point` 和终点 `/goal_point`
 4. 收到终点后触发 `GlobalPlanner::makePlan()`（3D A* 搜索）
@@ -75,7 +75,7 @@
 | 入 | `/start_point` | PointStamped | 起点(map帧) |
 | 入 | `/goal_point` | PointStamped | 终点(map帧) |
 | 入 | `/goal_pose` | PoseStamped | 终点(含朝向) |
-| 入 | `/pcd_file_cmd` | String | 动态切换PCD |
+| 入 | `/pcd_file_cmd` | String | 动态切换地图文件 |
 | 出 | `/planned_path` | Path | 全局路径(map帧) |
 | 出 | `/octomap` | Octomap | 完整OctoMap(transient_local) |
 | 出 | `/octomap_occupied_markers` | Marker | 占据体素(橘色) |
@@ -88,7 +88,7 @@
 | 参数 | 默认 | 含义 |
 |------|------|------|
 | `resolution` | 0.2 | OctoMap体素分辨率(m) |
-| `robot_radius` | 0.25 | 碰撞检测半径(m) |
+| `robot_radius` | 0.05 | 碰撞检测半径(m) |
 | `max_iterations` | 500000 | A*搜索上限 |
 | `require_ground_support` | true | 要求地面支撑 |
 | `enable_preblocked_costmap` | true | 代价膨胀 |

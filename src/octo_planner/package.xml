@@ -20,6 +20,8 @@
 
   <build_depend>liboctomap-dev</build_depend>
   <build_depend>libpcl-all-dev</build_depend>
+  <build_depend>libtinyxml2-dev</build_depend>
+  <build_depend>libeigen3-dev</build_depend>
   <exec_depend>liboctomap1.9</exec_depend>
   <exec_depend>libpcl-all</exec_depend>
   <exec_depend>rosbridge_server</exec_depend>

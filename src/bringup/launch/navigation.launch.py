@@ -125,12 +125,13 @@ def generate_launch_description():
                     {'autonomySpeed': 0.5},
                     {'maxSpeed': 0.5},
                     {'use_sim_time': use_sim_time},
-                    {'use_laser_scan': True},
+                    {'use_laser_scan': False},
                     {'use_planned_path': True},
                     {'global_frame_id': 'odom'},
                 ],
                 remappings=[
                     ('/state_estimation', '/odom'),
+                    ('/registered_scan', '/lidar_points'),
                 ],
             ),
             Node(

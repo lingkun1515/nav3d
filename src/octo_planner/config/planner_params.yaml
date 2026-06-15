@@ -45,3 +45,8 @@ octo_planner_node:
     # Publishing
     auto_publish_enabled: false
     octomap_publish_period_s: 5.0
+
+    # Auto-save: cache converted octomap as .bt alongside source file
+    auto_save_bt: true
+    # XY window for world/sdf loading (0 = no cropping)
+    world_xy_window_size_m: 24.0

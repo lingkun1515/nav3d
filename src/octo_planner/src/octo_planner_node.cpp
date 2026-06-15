@@ -3,6 +3,9 @@
 #include <vector>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
+#include <filesystem>
+#include <sys/stat.h>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -15,9 +18,12 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include "octomap_msgs/msg/octomap.hpp"
 #include "octomap_msgs/conversions.h"
+#include "octomap/AbstractOcTree.h"
+#include "octomap/OcTree.h"
 
 #include "pcd2octomap_converter.h"
 #include "global_planner.h"
+#include "world_loader.hpp"
 
 using namespace std::chrono_literals;
 
@@ -29,9 +35,9 @@ public:
     declare_parameters();
     setup_pub_sub();
 
-    std::string pcd_file = get_parameter("pcd_file").as_string();
-    if (!pcd_file.empty()) {
-      load_map(pcd_file);
+    std::string map_file = get_parameter("pcd_file").as_string();
+    if (!map_file.empty()) {
+      load_map_auto(map_file);
     } else {
       RCLCPP_INFO(get_logger(), "No pcd_file specified. Waiting for /pcd_file_cmd...");
     }
@@ -69,6 +75,8 @@ private:
     declare_parameter("flatten_max_delta_cells", 1);
     declare_parameter("octomap_publish_period_s", 1.0);
     declare_parameter("auto_publish_enabled", false);
+    declare_parameter("auto_save_bt", true);
+    declare_parameter("world_xy_window_size_m", 24.0);
   }
 
   void setup_pub_sub()
@@ -101,7 +109,7 @@ private:
 
     pcd_cmd_sub_ = create_subscription<std_msgs::msg::String>(
       "/pcd_file_cmd", rclcpp::QoS(1).reliable(),
-      [this](std_msgs::msg::String::SharedPtr msg) { load_map(msg->data); });
+      [this](std_msgs::msg::String::SharedPtr msg) { load_map_auto(msg->data); });
 
     request_map_srv_ = create_service<std_srvs::srv::Trigger>(
       "/request_map",
@@ -125,7 +133,128 @@ private:
     }
   }
 
-  void load_map(const std::string & pcd_file)
+  // ---- file utilities ----
+
+  static bool file_exists(const std::string & path)
+  {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0;
+  }
+
+  static bool is_newer_than(const std::string & a, const std::string & b)
+  {
+    struct stat sta, stb;
+    if (stat(a.c_str(), &sta) != 0) return false;
+    if (stat(b.c_str(), &stb) != 0) return true;
+    return sta.st_mtime > stb.st_mtime;
+  }
+
+  static std::string replace_extension(const std::string & path, const std::string & new_ext)
+  {
+    namespace fs = std::filesystem;
+    fs::path p(path);
+    p.replace_extension(new_ext);
+    return p.string();
+  }
+
+  // ---- format-aware loading ----
+
+  void load_map_auto(const std::string & file_path)
+  {
+    if (file_path.empty()) return;
+
+    std::string ext;
+    auto dot = file_path.rfind('.');
+    if (dot != std::string::npos) {
+      ext = file_path.substr(dot);
+      std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
+
+    // For PCD/World sources, check if a .bt cache exists and is newer
+    if (ext == ".pcd" || ext == ".world" || ext == ".sdf") {
+      std::string cache_bt = replace_extension(file_path, ".bt");
+      if (file_exists(cache_bt) && is_newer_than(cache_bt, file_path)) {
+        RCLCPP_INFO(get_logger(), "Loading from .bt cache (newer than source): %s", cache_bt.c_str());
+        load_bt_map(cache_bt);
+        return;
+      }
+    }
+
+    if (ext == ".pcd") {
+      load_pcd_map(file_path);
+    } else if (ext == ".bt") {
+      load_bt_map(file_path);
+    } else if (ext == ".ot") {
+      load_ot_map(file_path);
+    } else if (ext == ".world" || ext == ".sdf") {
+      load_world_map(file_path);
+    } else {
+      RCLCPP_ERROR(get_logger(), "Unsupported map format: %s (supported: .pcd .bt .ot .world .sdf)",
+                   file_path.c_str());
+      return;
+    }
+  }
+
+  void load_bt_map(const std::string & file_path)
+  {
+    RCLCPP_INFO(get_logger(), "Loading .bt: %s", file_path.c_str());
+    try {
+      octree_ = std::make_shared<octomap::OcTree>(file_path);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "Failed to load .bt file: %s", e.what());
+      return;
+    }
+    if (octree_->size() == 0) {
+      RCLCPP_ERROR(get_logger(), "Loaded .bt but tree is empty: %s", file_path.c_str());
+      return;
+    }
+    configure_planner();
+  }
+
+  void load_ot_map(const std::string & file_path)
+  {
+    RCLCPP_INFO(get_logger(), "Loading .ot: %s", file_path.c_str());
+    octomap::AbstractOcTree * raw = nullptr;
+    try {
+      raw = octomap::AbstractOcTree::read(file_path);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "Failed to load .ot file: %s", e.what());
+      return;
+    }
+    if (!raw) {
+      RCLCPP_ERROR(get_logger(), "Failed to read .ot file: %s", file_path.c_str());
+      return;
+    }
+    octomap::OcTree * ot = dynamic_cast<octomap::OcTree *>(raw);
+    if (!ot) {
+      RCLCPP_ERROR(get_logger(), ".ot file is not an OcTree (got: %s)", raw->getTreeType().c_str());
+      delete raw;
+      return;
+    }
+    octree_.reset(ot);
+    configure_planner();
+  }
+
+  void load_world_map(const std::string & file_path)
+  {
+    RCLCPP_INFO(get_logger(), "Loading .world/.sdf: %s", file_path.c_str());
+    double resolution = get_parameter("resolution").as_double();
+    double xy_win = get_parameter("world_xy_window_size_m").as_double();
+    try {
+      octree_ = loadWorldToOctomap(file_path, resolution, xy_win);
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(get_logger(), "Failed to load world file: %s", e.what());
+      return;
+    }
+    if (!octree_ || octree_->size() == 0) {
+      RCLCPP_ERROR(get_logger(), "World file produced empty map: %s", file_path.c_str());
+      return;
+    }
+    configure_planner();
+    save_bt_cache(file_path);
+  }
+
+  void load_pcd_map(const std::string & pcd_file)
   {
     RCLCPP_INFO(get_logger(), "Loading PCD: %s", pcd_file.c_str());
 
@@ -154,7 +283,27 @@ private:
       return;
     }
 
-    RCLCPP_INFO(get_logger(), "OctoMap built. Resolution=%.3f, leaves=%zu",
+    configure_planner();
+    save_bt_cache(pcd_file);
+  }
+
+  void save_bt_cache(const std::string & source_file)
+  {
+    if (!get_parameter("auto_save_bt").as_bool()) return;
+    if (!octree_) return;
+    std::string bt_path = replace_extension(source_file, ".bt");
+    if (octree_->writeBinary(bt_path)) {
+      RCLCPP_INFO(get_logger(), "Saved .bt cache: %s", bt_path.c_str());
+    } else {
+      RCLCPP_WARN(get_logger(), "Failed to save .bt cache: %s", bt_path.c_str());
+    }
+  }
+
+  void configure_planner()
+  {
+    if (!octree_) return;
+
+    RCLCPP_INFO(get_logger(), "OctoMap ready. Resolution=%.3f, leaves=%zu",
                 octree_->getResolution(), octree_->getNumLeafNodes());
 
     global_planner::PlannerConfig planner_cfg;
