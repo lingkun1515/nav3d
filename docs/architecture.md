@@ -239,7 +239,7 @@ map_preprocessor.py  ──→  map_nav3d.pcd (位于 src/bringup/maps/)
 ### 在线导航流程（Web → 规划 → 仿真闭环）
 
 ```
-终端1: ros2 launch bringup navigation.launch.py pcd_file:=/path/to/map.pcd
+终端1: ros2 launch bringup navigation.launch.py
        (一键启动: Gazebo + octo_planner + localPlanner + pathFollower + rosbridge + RViz2)
 ```
 

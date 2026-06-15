@@ -84,7 +84,7 @@ ROS 2 package，提供仿真环境用于闭环导航调试。
 - 差速驱动小车 URDF（Xacro），含 Gazebo 插件（diff_drive + lidar + joint_states）
 - 发布里程计真值（`/odom`）、TF（odom→base_footprint→base_link）、激光扫描（`/scan`）
 - 接受 `/cmd_vel`（Twist）控制小车移动
-- bt_to_world：`.bt` → Gazebo `.world` 离线转换（读取占据体素 → 贪婪合并 → SDF box）。launch 文件自动调用，结果缓存至 `worlds/from_bt.world`（存在则直接复用）。旧版 `pcd_to_world.py` 保留供手动使用
+- bt_to_world / pcd_to_world：离线脚本，将 `.bt`/`.pcd` 转为 Gazebo `.world`（读取占据体素 → 贪婪合并 → SDF box）。手动运行，生成结果放在 `worlds/map_nav3d.world`。launch 文件不再动态生成世界
 - nav\_bridge / waypoint\_follower 已删除：所有中继/控制逻辑已下沉到 localPlanner / pathFollower (C++)
 
 **启动方式：**
@@ -92,7 +92,7 @@ ROS 2 package，提供仿真环境用于闭环导航调试。
 # 仅仿真（空地）
 ros2 launch simulation gazebo.launch.py
 # 带障碍物（预生成的 world 文件）
-ros2 launch simulation gazebo.launch.py world:=.../worlds/obstacles.world
+ros2 launch simulation gazebo.launch.py world:=.../worlds/map_nav3d.world
 ```
 
 ### bringup — 启动与配置
@@ -106,7 +106,7 @@ ament_cmake package，集中管理所有 launch 文件和 RViz2 配置，无 C++
 **启动参数：**
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `pcd_file` | `""` | 地图文件（支持 .pcd/.bt/.ot/.world/.sdf），提供后自动生成 Gazebo 世界场景 |
+| `pcd_file` | `""` | 地图文件（支持 .pcd/.bt/.ot/.world/.sdf）。Gazebo 世界需离线生成（bt_to_world.py / pcd_to_world.py） |
 | `launch_rviz` | `true` | 是否启动 RViz2 |
 | `use_sim_time` | `true` | 使用仿真时间 |
 
@@ -152,15 +152,6 @@ Git submodule，由外部仓库导入。当前状态：预留。
 | OctoPlanner3D 库 | `~/Projects/NavProject/OctoPlanner3D/` | 全局规划核心算法 |
 | jie_octomap 参考 | `~/Projects/NavProject/jie_3d_nav/jie_octomap/` | Web可视化与地图管理参考实现 |
 | autonomy_stack local_planner | `~/Projects/NavProject/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/local_planner` | 局部规划移植源 |
-
-## 系统依赖
-
-| 包 | 用途 |
-|----|------|
-| `liboctomap-dev` | OctoMap 核心库 |
-| `libpcl-all-dev` | PCD 点云处理 |
-| `libtinyxml2-dev` | .world/.sdf XML 解析 |
-| `libeigen3-dev` | 线性代数（world_loader 姿态计算） |
 
 ## 构建与运行
 

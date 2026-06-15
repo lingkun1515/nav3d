@@ -18,6 +18,8 @@ def generate_launch_description():
     map_pcd = os.path.join(maps_dir, 'map_nav3d.pcd')
     default_map = map_bt if os.path.exists(map_bt) else (
         map_pcd if os.path.exists(map_pcd) else '')
+    if default_map:
+        default_map = os.path.realpath(default_map)  # resolve install symlink → src/
 
     return LaunchDescription([
         DeclareLaunchArgument(

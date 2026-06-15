@@ -6,17 +6,20 @@ End-to-end flow:
           pathFollower  /cmd_vel (Twist)  Gazebo robot
 
 用法:
+  ros2 launch bringup navigation.launch.py
   ros2 launch bringup navigation.launch.py pcd_file:=/path/to/map.pcd
-  ros2 launch bringup navigation.launch.py  # 使用已有 from_pcd.world 或 empty.world
-  ros2 launch bringup navigation.launch.py launch_rviz:=false  # 不启动 RViz2
+  ros2 launch bringup navigation.launch.py launch_rviz:=false
+
+Gazebo 场景需离线生成（两种方式）：
+  # 方式1: PCD → world
+  python3 src/simulation/scripts/pcd_to_world.py <map.pcd> <output.world>
+  # 方式2: BT → world
+  python3 src/simulation/scripts/bt_to_world.py <map.bt> <output.world>
 """
 import os
-import sys
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            TimerAction, ExecuteProcess, RegisterEventHandler,
-                            OpaqueFunction)
-from launch.event_handlers import OnProcessExit
+                            TimerAction)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
@@ -44,46 +47,26 @@ def generate_launch_description():
     map_pcd = os.path.join(maps_dir, 'map_nav3d.pcd')
     default_map = map_bt if os.path.exists(map_bt) else (
         map_pcd if os.path.exists(map_pcd) else '')
+    if default_map:
+        default_map = os.path.realpath(default_map)  # resolve install symlink → src/
 
     empty_world = os.path.join(sim_share, 'worlds', 'empty.world')
-    from_pcd_world = os.path.join(sim_share, 'worlds', 'from_pcd.world')
-    pcd_to_world_script = os.path.join(sim_share, 'scripts', 'pcd_to_world.py')
+    nav3d_world = os.path.join(sim_share, 'worlds', 'map_nav3d.world')
+    path_world = nav3d_world if os.path.exists(nav3d_world) else empty_world
     gazebo_launch_file = os.path.join(sim_share, 'launch', 'gazebo.launch.py')
 
-    def _setup_gazebo(context):
-        plc = context.perform_substitution(pcd_file)
-        utc = context.perform_substitution(use_sim_time)
-
-        if plc and not os.path.exists(from_pcd_world):
-            gen = ExecuteProcess(
-                cmd=[sys.executable, pcd_to_world_script, plc, from_pcd_world,
-                     '--resolution', '0.3', '--max-boxes', '3000'],
-                name='pcd_to_world',
-                output='screen',
-            )
-            gz = IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(gazebo_launch_file),
-                launch_arguments={
-                    'world': from_pcd_world,
-                    'use_sim_time': utc,
-                }.items(),
-            )
-            return [gen,
-                    RegisterEventHandler(
-                        OnProcessExit(target_action=gen, on_exit=[gz]))]
-
-        world = from_pcd_world if os.path.exists(from_pcd_world) else empty_world
-        return [IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(gazebo_launch_file),
-            launch_arguments={'world': world, 'use_sim_time': utc}.items(),
-        )]
+    x_arg = LaunchConfiguration('x')
+    y_arg = LaunchConfiguration('y')
+    z_arg = LaunchConfiguration('z')
+    yaw_arg = LaunchConfiguration('yaw')
+    launch_sim = LaunchConfiguration('launch_sim')
 
     ld = LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument(
             'world',
-            default_value=from_pcd_world,
-            description='Gazebo world file',
+            default_value=path_world,
+            description='Gazebo world file (generate offline: pcd_to_world.py / bt_to_world.py)',
         ),
         DeclareLaunchArgument(
             'pcd_file', default_value=default_map,
@@ -93,10 +76,29 @@ def generate_launch_description():
             'launch_rviz', default_value='true',
             description='Launch RViz2 with the navigation config',
         ),
+        DeclareLaunchArgument(
+            'launch_sim', default_value='true',
+            description='Launch Gazebo simulation (set false for real robot)',
+        ),
+        DeclareLaunchArgument('x', default_value='0.0', description='Robot initial X (m)'),
+        DeclareLaunchArgument('y', default_value='-6.0', description='Robot initial Y (m)'),
+        DeclareLaunchArgument('z', default_value='0.1', description='Robot initial Z (m)'),
+        DeclareLaunchArgument('yaw', default_value='0.0', description='Robot initial yaw (rad)'),
     ])
 
-    # 1. Gazebo + robot
-    ld.add_action(OpaqueFunction(function=_setup_gazebo))
+    # 1. Gazebo + robot (optional, controlled by launch_sim)
+    ld.add_action(IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(gazebo_launch_file),
+        launch_arguments={
+            'world': path_world,
+            'use_sim_time': use_sim_time,
+            'x': x_arg,
+            'y': y_arg,
+            'z': z_arg,
+            'yaw': yaw_arg,
+        }.items(),
+        condition=IfCondition(launch_sim),
+    ))
 
     # 2. octo_planner
     ld.add_action(TimerAction(

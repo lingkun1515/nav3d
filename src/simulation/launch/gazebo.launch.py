@@ -82,11 +82,22 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Static TF: map -> odom (identity, since we use ground truth odom)
+        # Static TF: map -> odom.
+        # odom frame origin = robot spawn position (diff_drive ENCODER mode).
+        # Translate by spawn coords so map aligns with Gazebo world / PCD map origin.
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+            arguments=[
+                LaunchConfiguration('x'),
+                LaunchConfiguration('y'),
+                '0',
+                LaunchConfiguration('yaw'),
+                '0',
+                '0',
+                'map',
+                'odom',
+            ],
             parameters=[{'use_sim_time': use_sim_time}],
             output='screen',
         ),

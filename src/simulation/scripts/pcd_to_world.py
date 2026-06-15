@@ -65,33 +65,59 @@ def load_pcd(filepath):
 
 def load_octomap_bt(filepath, resolution=0.2):
     """Load .bt OctoMap binary, extract occupied leaf centers.
-    Falls back to using octomap Python bindings or command-line tool."""
-    try:
-        import octomap as octomap_py
-        tree = octomap_py.OcTree(resolution)
-        tree.readBinary(str(filepath).encode())
-        points = []
-        it = tree.begin_leafs()
-        while it != tree.end_leafs():
-            if tree.isNodeOccupied(it):
-                coord = it.getCoordinate()
-                points.append([coord.x(), coord.y(), coord.z()])
-            it.__next__()
-        return np.array(points)
-    except ImportError:
-        pass
 
-    # Fallback: try octomap CLI
-    import subprocess
-    import tempfile
-    with tempfile.NamedTemporaryFile(suffix='.pcd', delete=False) as tmp:
-        tmp_path = tmp.name
-    try:
-        subprocess.run(['octomap_to_pcd', str(filepath), tmp_path], check=True, capture_output=True)
-        return load_pcd(tmp_path)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print(f"Error: cannot load .bt file. Install python-octomap or octomap-tools.", file=sys.stderr)
+    Pure Python implementation — no external OctoMap dependency needed.
+    OctoMap binary format: 2 bytes per node, encoding 8 children (2 bits each):
+      00 = no child, 01 = free leaf, 10 = occupied leaf, 11 = inner node.
+    Depth-first traversal; tree_depth defaults to 16.
+    """
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    header_end = data.find(b'data\n') + 5
+    binary = data[header_end:]
+    pos = [0]
+
+    def _read_u16():
+        if pos[0] + 2 > len(binary):
+            return None
+        lo, hi = binary[pos[0]], binary[pos[0] + 1]
+        pos[0] += 2
+        return lo, hi
+
+    tree_depth = 16
+    root_size = resolution * (1 << tree_depth)
+    occupied = []
+
+    def _parse(depth, cx, cy, cz, size):
+        node = _read_u16()
+        if node is None:
+            return
+        b1, b2 = node
+        half = size / 2.0
+        quarter = size / 4.0
+
+        for child_i in range(8):
+            shift = (child_i % 4) * 2
+            code = ((b1 if child_i < 4 else b2) >> shift) & 0x03
+
+            dx = quarter if (child_i & 1) else -quarter
+            dy = quarter if (child_i & 2) else -quarter
+            dz = quarter if (child_i & 4) else -quarter
+
+            if code == 0x02:  # occupied leaf
+                occupied.append([cx + dx, cy + dy, cz + dz])
+            elif code == 0x03:  # inner node
+                if depth + 1 < tree_depth:
+                    _parse(depth + 1, cx + dx, cy + dy, cz + dz, half)
+
+    _parse(0, 0.0, 0.0, 0.0, root_size)
+
+    if not occupied:
+        print("Error: no occupied voxels found in .bt file", file=sys.stderr)
         sys.exit(1)
+
+    return np.array(occupied, dtype=np.float64)
 
 
 def voxelize(points, resolution):
