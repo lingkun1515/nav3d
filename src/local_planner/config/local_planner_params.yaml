@@ -55,9 +55,6 @@ localPlanner:
     omniDirGoalThre: 1.0
     goalClearRange: 0.5
     goalBehindRange: 0.8
-    goalX: 0.0
-    goalY: 0.0
-
     # TF / input configuration
     global_frame_id: "map"
     use_planned_path: false

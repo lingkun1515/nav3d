@@ -233,9 +233,6 @@ private:
     omniDirGoalThre_ = get_parameter("omniDirGoalThre").as_double();
     goalClearRange_ = get_parameter("goalClearRange").as_double();
     goalBehindRange_ = get_parameter("goalBehindRange").as_double();
-    goalX_ = get_parameter("goalX").as_double();
-    goalY_ = get_parameter("goalY").as_double();
-
     global_frame_id_ = get_parameter("global_frame_id").as_string();
     use_planned_path_ = get_parameter("use_planned_path").as_bool();
     use_laser_scan_ = get_parameter("use_laser_scan").as_bool();
@@ -524,6 +521,7 @@ private:
   {
     goalX_ = goal->point.x;
     goalY_ = goal->point.y;
+    has_goal_ = true;
   }
 
   // ---- LaserScan → PointCloud2 conversion with TF ----
@@ -816,6 +814,7 @@ private:
       }
       goalX_ = std::get<0>(planned_waypoints_[target_idx]);
       goalY_ = std::get<1>(planned_waypoints_[target_idx]);
+      has_goal_ = true;
 
       // Advance reached waypoints
       while (current_wp_idx_ < planned_waypoints_.size() - 1) {
@@ -836,6 +835,7 @@ private:
         double dist = std::hypot(wx - vehicleX_, wy - vehicleY_);
         if (dist < waypoint_tolerance_) {
           navigating_ = false;
+          has_goal_ = false;
           RCLCPP_INFO(get_logger(), "Navigation complete - goal reached");
         }
       }
@@ -851,11 +851,16 @@ private:
     float joyDir = joyDir_;
 
     if (autonomyMode_) {
-      float relativeGoalX = ((goalX_ - vehicleX_) * cosYaw + (goalY_ - vehicleY_) * sinYaw);
-      float relativeGoalY = (-(goalX_ - vehicleX_) * sinYaw + (goalY_ - vehicleY_) * cosYaw);
+      if (!has_goal_) {
+        relativeGoalDis = 0;
+        joyDir = 0;
+      } else {
+        float relativeGoalX = ((goalX_ - vehicleX_) * cosYaw + (goalY_ - vehicleY_) * sinYaw);
+        float relativeGoalY = (-(goalX_ - vehicleX_) * sinYaw + (goalY_ - vehicleY_) * cosYaw);
 
-      relativeGoalDis = std::sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
-      joyDir = std::atan2(relativeGoalY, relativeGoalX) * 180.0f / PI;
+        relativeGoalDis = std::sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
+        joyDir = std::atan2(relativeGoalY, relativeGoalX) * 180.0f / PI;
+      }
 
       if (std::abs(joyDir) > freezeAng_ && relativeGoalDis < goalBehindRange_) {
         relativeGoalDis = 0;
@@ -1209,6 +1214,7 @@ private:
   std::vector<std::tuple<double, double, double>> planned_waypoints_;
   size_t current_wp_idx_ = 0;
   bool navigating_ = false;
+  bool has_goal_ = false;
 
   // ---- path data ----
   pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths_[GROUP_NUM];

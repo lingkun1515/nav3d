@@ -176,6 +176,20 @@ def generate_world_sdf(boxes):
 
     <gravity>0 0 -9.81</gravity>
 {models_sdf}
+    <gui fullscreen="0">
+      <camera name="follow_camera">
+        <pose>0 0 2 0 0 0</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+        <track_visual>
+          <name>diff_drive_robot</name>
+          <use_model_frame>true</use_model_frame>
+          <min_dist>1</min_dist>
+          <max_dist>50</max_dist>
+          <static>false</static>
+        </track_visual>
+      </camera>
+    </gui>
   </world>
 </sdf>
 """

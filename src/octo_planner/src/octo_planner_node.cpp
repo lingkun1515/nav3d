@@ -82,30 +82,31 @@ private:
 
   void setup_pub_sub()
   {
-    auto qos_reliable = rclcpp::QoS(5).reliable();
     auto qos_tl = rclcpp::QoS(1).transient_local().reliable();
+    auto qos_tl_marker = rclcpp::QoS(50).transient_local().reliable();
+    auto qos_sub = rclcpp::QoS(5).reliable();
 
     octomap_pub_ = create_publisher<octomap_msgs::msg::Octomap>("/octomap", qos_tl);
     occupied_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/octomap_occupied_markers", qos_reliable);
+      "/octomap_occupied_markers", qos_tl_marker);
     traversable_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/traversable_cells_markers", qos_reliable);
+      "/traversable_cells_markers", qos_tl_marker);
     preblocked_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(
-      "/preblocked_cells_markers", qos_reliable);
+      "/preblocked_cells_markers", qos_tl_marker);
     risk_cost_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
-      "/risk_cost_cells", qos_reliable);
+      "/risk_cost_cells", qos_tl);
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/planned_path", qos_tl);
 
     start_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      "/start_point", qos_reliable,
+      "/start_point", qos_sub,
       [this](geometry_msgs::msg::PointStamped::SharedPtr msg) { on_start(msg); });
 
     goal_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
-      "/goal_point", qos_reliable,
+      "/goal_point", qos_sub,
       [this](geometry_msgs::msg::PointStamped::SharedPtr msg) { on_goal(msg); });
 
     goal_pose_sub_ = create_subscription<geometry_msgs::msg::PoseStamped>(
-      "/goal_pose", qos_reliable,
+      "/goal_pose", qos_sub,
       [this](geometry_msgs::msg::PoseStamped::SharedPtr msg) { on_goal_pose(msg); });
 
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
