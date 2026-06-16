@@ -20,6 +20,27 @@
         <label><input id="toggle-risk" type="checkbox" /> 代价</label>
       </div>
 
+      <div class="edit-section">
+        <button id="edit-mode-btn" type="button" class="btn secondary">编辑地图</button>
+        <div id="edit-controls" class="edit-controls" hidden>
+          <div class="edit-row">
+            <label class="edit-label">笔刷大小</label>
+            <select id="brush-size">
+              <option value="1">1x1</option>
+              <option value="3" selected>3x3</option>
+              <option value="5">5x5</option>
+            </select>
+          </div>
+          <div class="edit-row">
+            <label class="edit-label">清除范围 <span id="level-range-val">1.0</span>m</label>
+            <input id="level-range-slider" type="range" min="0.2" max="3.0" step="0.1" value="1.0" />
+          </div>
+          <div class="edit-row edit-hint">点击占据体素获取目标Z → 拖拽刷平地面（添加目标Z + 清除上下范围体素）</div>
+          <button id="save-map-btn" type="button" class="btn action">保存地图</button>
+          <button id="load-map-btn" type="button" class="btn action">加载地图</button>
+        </div>
+      </div>
+
       <button id="reset-view-btn" type="button" class="btn secondary">重置视角</button>
       <button id="fetch-map-btn" type="button" class="btn secondary">获取地图</button>
 
@@ -27,7 +48,7 @@
         <div id="robot-status" class="status-indicator offline">机器人未定位</div>
         <button id="set-start-btn" type="button" class="btn action">设置起点</button>
         <button id="set-goal-btn" type="button" class="btn action">设置终点</button>
-        <button id="navigate-btn" type="button" class="btn primary">导航目标</button>
+        <button id="navigate-btn" type="button" class="btn primary">开始导航</button>
       </div>
 
       <button id="stop-nav-btn" type="button" class="btn danger">停止导航</button>
@@ -80,6 +101,45 @@
       <div class="modal-actions">
         <button id="nav-confirm-go" type="button" class="btn primary">开始导航</button>
         <button id="nav-confirm-cancel" type="button" class="btn secondary">仅显示路线</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="save-modal" class="modal-backdrop" hidden>
+    <div class="modal-card file-browser-modal" role="dialog" aria-modal="true">
+      <h2>保存地图</h2>
+      <div class="file-browser">
+        <div class="fb-breadcrumb">
+          <button id="save-fb-up" type="button" class="btn secondary fb-up" title="上层目录">&#8679;</button>
+          <span id="save-fb-path" class="fb-path"></span>
+        </div>
+        <ul id="save-fb-list" class="fb-list"></ul>
+      </div>
+      <label class="field">
+        <span>文件名 (.bt)</span>
+        <input id="save-fb-name" type="text" value="map_edited.bt" />
+      </label>
+      <div class="modal-actions">
+        <button id="save-confirm" type="button" class="btn primary">保存</button>
+        <button id="save-cancel" type="button" class="btn secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="load-modal" class="modal-backdrop" hidden>
+    <div class="modal-card file-browser-modal" role="dialog" aria-modal="true">
+      <h2>加载地图</h2>
+      <div class="file-browser">
+        <div class="fb-breadcrumb">
+          <button id="load-fb-up" type="button" class="btn secondary fb-up" title="上层目录">&#8679;</button>
+          <span id="load-fb-path" class="fb-path"></span>
+        </div>
+        <ul id="load-fb-list" class="fb-list"></ul>
+      </div>
+      <div id="load-selected-info" class="fb-selected">未选择文件</div>
+      <div class="modal-actions">
+        <button id="load-confirm" type="button" class="btn primary" disabled>加载</button>
+        <button id="load-cancel" type="button" class="btn secondary">取消</button>
       </div>
     </div>
   </div>

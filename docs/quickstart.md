@@ -104,9 +104,9 @@ ros2 run octo_planner octo_planner_node --ros-args \
   -p resolution:=0.2 \
   -p robot_radius:=0.05
 
-# 终端3：Web 前端静态服务
+# 终端3：Web 前端静态服务（含文件浏览 API）
 cd ~/Projects/NavProject/Dog3DNav/web
-python3 -m http.server 8080
+python3 server.py 8080
 ```
 
 ### 方式二：后台一键启动
@@ -123,7 +123,7 @@ ros2 run octo_planner octo_planner_node --ros-args \
   -p resolution:=0.2 -p robot_radius:=0.05 &
 
 # 启动 Web 服务
-cd web && python3 -m http.server 8080 &
+cd web && python3 server.py 8080 &
 ```
 
 ### 方式三：launch 文件（含 rosbridge）
@@ -134,7 +134,7 @@ ros2 launch octo_planner planner.launch.py \
   pcd_file:=$HOME/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.pcd
 
 # 另开终端启动 Web
-cd web && python3 -m http.server 8080
+cd web && python3 server.py 8080
 ```
 
 ## 打开 Web 前端
@@ -157,8 +157,13 @@ cd web && python3 -m http.server 8080
 | 停止导航 | 点击红色「停止导航」按钮 |
 | 手动控制 | 拖拽虚拟摇杆 / 滑动旋转条 |
 | 层级切换 | 勾选/取消 占据/可通行/禁行/代价 复选框 |
+| 编辑地形 | 点击「编辑地图」→ 选择添加/擦除模式 → 拖拽鼠标刷地形 → Q/E 升降笔刷高度 |
+| 保存地图 | 编辑模式下点击「保存地图」→ 浏览目录 → 输入文件名 → 确认 |
+| 加载地图 | 编辑模式下点击「加载地图」→ 浏览目录 → 点击文件 → 确认 |
 
 > **提示：** 设置起点/终点前，需要先勾选「可通行」层使其可见，才能点击选点。
+> 
+> **编辑地形提示：** 笔刷在鼠标所在 Z 平面刷体素。1x1/3x3/5x5 控制笔刷大小。左侧 Z 高度滑块调节笔刷平面。编辑后体素即时显示，200ms 后批量同步到 octo_planner 并自动重分析可通行区。
 
 ## 常用 ROS 2 话题
 

@@ -111,6 +111,8 @@ public:
 
   void configure(const PlannerConfig& config);
 
+  void reanalyze();
+
   void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);

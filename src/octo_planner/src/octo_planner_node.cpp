@@ -117,6 +117,22 @@ private:
       "/pcd_file_cmd", rclcpp::QoS(1).reliable(),
       [this](std_msgs::msg::String::SharedPtr msg) { load_map_auto(msg->data); });
 
+    add_voxels_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/add_occupied_voxels", qos_sub,
+      [this](sensor_msgs::msg::PointCloud2::SharedPtr msg) { on_add_voxels(msg); });
+
+    remove_voxels_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/remove_occupied_voxels", qos_sub,
+      [this](sensor_msgs::msg::PointCloud2::SharedPtr msg) { on_remove_voxels(msg); });
+
+    save_map_sub_ = create_subscription<std_msgs::msg::String>(
+      "/save_octomap_path", rclcpp::QoS(1).reliable(),
+      [this](std_msgs::msg::String::SharedPtr msg) { on_save_map(msg); });
+
+    load_map_sub_ = create_subscription<std_msgs::msg::String>(
+      "/load_map_file", rclcpp::QoS(1).reliable(),
+      [this](std_msgs::msg::String::SharedPtr msg) { load_map_auto(msg->data); });
+
     request_map_srv_ = create_service<std_srvs::srv::Trigger>(
       "/request_map",
       [this](const std_srvs::srv::Trigger::Request::SharedPtr,
@@ -126,9 +142,10 @@ private:
           res->message = "Map not ready yet.";
           return;
         }
+        planner_->reanalyze();
         republish_all();
         res->success = true;
-        res->message = "Map data republished.";
+        res->message = "Map reanalyzed & republished.";
       });
 
     if (get_parameter("auto_publish_enabled").as_bool()) {
@@ -302,6 +319,48 @@ private:
       RCLCPP_INFO(get_logger(), "Saved .bt cache: %s", bt_path.c_str());
     } else {
       RCLCPP_WARN(get_logger(), "Failed to save .bt cache: %s", bt_path.c_str());
+    }
+  }
+
+  void on_add_voxels(sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    if (!octree_ || !map_ready_) return;
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+    int count = 0;
+    for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+      octree_->updateNode(*iter_x, *iter_y, *iter_z, true);
+      count++;
+    }
+    if (count == 0) return;
+    octree_->updateInnerOccupancy();
+    RCLCPP_INFO(get_logger(), "Added %d occupied voxels", count);
+  }
+
+  void on_remove_voxels(sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    if (!octree_ || !map_ready_) return;
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
+    int count = 0;
+    for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+      octree_->updateNode(*iter_x, *iter_y, *iter_z, false);
+      count++;
+    }
+    if (count == 0) return;
+    octree_->updateInnerOccupancy();
+    RCLCPP_INFO(get_logger(), "Removed %d occupied voxels", count);
+  }
+
+  void on_save_map(std_msgs::msg::String::SharedPtr msg)
+  {
+    if (!octree_) return;
+    if (octree_->writeBinary(msg->data)) {
+      RCLCPP_INFO(get_logger(), "Saved map to: %s", msg->data.c_str());
+    } else {
+      RCLCPP_ERROR(get_logger(), "Failed to save map to: %s", msg->data.c_str());
     }
   }
 
@@ -635,6 +694,11 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr pcd_cmd_sub_;
+
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr add_voxels_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr remove_voxels_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr save_map_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr load_map_sub_;
 
   rclcpp::TimerBase::SharedPtr republish_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_map_srv_;

@@ -93,6 +93,20 @@ namespace global_planner
         rebuildPreblockedCostmap();
     }
 
+    void GlobalPlanner::reanalyze()
+    {
+        if (!octree_ || !map_ready_) return;
+        rebuildPreblockedCells();
+        rebuildDerivedLayers();
+        if (radical_infill_enabled_) {
+          radicalInfill();
+        }
+        if (flatten_enabled_) {
+          flattenTraversable();
+        }
+        rebuildPreblockedCostmap();
+    }
+
     void GlobalPlanner::makePlan(const PointPose start,const PointPose goal)
     {
         start_point_ = start;

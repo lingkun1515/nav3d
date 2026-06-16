@@ -232,6 +232,9 @@ ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'
 | 点击「停止导航」 | `/stop_navigation` | 中止导航 |
 | 拖拽虚拟摇杆 | `/web_cmd_vel` | 手动控制(80ms间隔) |
 | 滑动旋转条 | `/web_cmd_vel` | 原地旋转 |
+| 编辑模式下拖拽刷地形 | `/add_occupied_voxels` 或 `/remove_occupied_voxels` | 批量 PointCloud2，体素坐标列表 |
+| 点击「保存地图」 | `/save_octomap_path` | 保存 .bt 文件路径 |
+| 点击「加载地图」 | `/load_map_file` | 加载地图文件路径 |
 
 **ROS 数据 → 3D 渲染映射：**
 
@@ -248,6 +251,16 @@ ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'
 - 射线检测 (`Raycaster`) 与可通行体素的 InstancedMesh 求交
 - 确定选中点后，通过拖拽方向计算朝向 (yaw)
 - 起点以绿球标记、终点以红球标记
+
+**地图编辑交互：**
+- 点击「编辑地图」进入编辑模式，展开编辑控件面板
+- 笔刷模式：添加占据（橘色）或擦除占据（红色预览）
+- 笔刷大小：1x1 / 3x3 / 5x5 体素网格
+- Z 高度：滑块调节或 Q/E 键升降（步长 = 体素分辨率）
+- 拖拽鼠标刷地形，体素即时本地渲染（重建 InstancedMesh）
+- 200ms debounce 后通过 PointCloud2 批量发送到 octo_planner
+- octo_planner 收到后更新 OcTree → `reanalyze()` 重分析可通行区 → 重新发布 Marker → Web 更新显示
+- 编辑链路：Web 笔刷 → `/add_occupied_voxels` / `/remove_occupied_voxels` → octo_planner_node → `updateNode()` → `updateInnerOccupancy()` → `planner_->reanalyze()` → `republish_all()` → Web 订阅更新
 
 ---
 

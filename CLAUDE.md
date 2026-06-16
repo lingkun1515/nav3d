@@ -140,7 +140,7 @@ Git submodule，由外部仓库导入。当前状态：预留。
 - 点击可通行体素设置起/终点，拖拽设定航向角（箭头可视化）
 - 导航目标下发 → 接收规划路径（亮青色发光管线）→ 弹窗确认执行/停止
 - 事件日志面板（起终点坐标+航向、导航开始/停止、地图加载进度等）
-- 地图编辑交互（禁行区标注等）
+- 地图编辑交互：笔刷添加/擦除占据体素，支持多尺寸笔刷 + Z 平面调节 + 即时本地渲染，200ms debounce 批量同步到 octo_planner（PointCloud2 → updateNode → reanalyze → republish），支持 .bt 保存/加载
 - 手动运动控制（虚拟摇杆 + 旋转滑块，发布 `/web_cmd_vel`）
 
 **通信方案：** rosbridge WebSocket（`ws://localhost:9090`），话题发布/订阅均在 main.js 中管理。

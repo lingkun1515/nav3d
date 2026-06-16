@@ -82,6 +82,7 @@ scene.add(occupiedGroup, traversableGroup, preblockedGroup, riskGroup, pathGroup
 
 // Pick targets
 let traversablePickMesh = null;
+let occupiedPickMesh = null;
 
 // Placement mode
 let placementMode = null; // 'start' | 'goal' | 'navigate' | null
@@ -107,6 +108,10 @@ let goalPoseTopic = null;
 let startNavTopic = null;
 let stopNavTopic = null;
 let cmdVelTopic = null;
+let addVoxelsTopic = null;
+let removeVoxelsTopic = null;
+let saveMapTopic = null;
+let loadMapTopic = null;
 let requestMapService = null;
 
 // Joystick state
@@ -217,18 +222,33 @@ let preblockedRenderTimer = null;
 let mapLoaded = { occupied: false, traversable: false, preblocked: false, risk: false };
 const CHUNK_COLLECT_MS = 800;
 
+// Edit mode state
+let editMode = false;
+let editBrushSize = 3;
+let levelTargetZ = null;
+let levelRange = 1.0;
+let editDragging = false;
+let pendingAddPositions = [];
+let pendingRemovePositions = [];
+let editFlushTimer = null;
+let brushPreviewGroup = null;
+let mapZMin = 0;
+let mapZMax = 5;
+
 function setOccupiedMarker(msg) {
-  if (mapLoaded.occupied) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) occupiedPointsBuf = [];
   occupiedPointsBuf.push(...msg.points);
   if (occupiedRenderTimer) clearTimeout(occupiedRenderTimer);
   occupiedRenderTimer = setTimeout(() => {
     clearGroup(occupiedGroup);
-    const { group } = makeVoxelLayer(occupiedPointsBuf, 0xff7043, 0.92);
+    const { group, pickMesh } = makeVoxelLayer(occupiedPointsBuf, 0xff7043, 0.92);
     occupiedGroup.add(group);
-    mapLoaded.occupied = true;
-    log(`占据层: ${occupiedPointsBuf.length} 体素`, 'info');
+    occupiedPickMesh = pickMesh;
+    if (!mapLoaded.occupied) {
+      mapLoaded.occupied = true;
+      log(`占据层: ${occupiedPointsBuf.length} 体素`, 'info');
+    }
     updateMapProgress();
     autoFrameCamera();
     occupiedRenderTimer = null;
@@ -236,7 +256,6 @@ function setOccupiedMarker(msg) {
 }
 
 function setTraversableMarker(msg) {
-  if (mapLoaded.traversable) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) traversablePointsBuf = [];
   traversablePointsBuf.push(...msg.points);
@@ -246,8 +265,10 @@ function setTraversableMarker(msg) {
     const { group, pickMesh } = makeVoxelLayer(traversablePointsBuf, 0x00e676, 0.28);
     traversableGroup.add(group);
     traversablePickMesh = pickMesh;
-    mapLoaded.traversable = true;
-    log(`可通行层: ${traversablePointsBuf.length} 体素`, 'info');
+    if (!mapLoaded.traversable) {
+      mapLoaded.traversable = true;
+      log(`可通行层: ${traversablePointsBuf.length} 体素`, 'info');
+    }
     updateMapProgress();
     traversableRenderTimer = null;
   }, CHUNK_COLLECT_MS);
@@ -272,14 +293,17 @@ function setPreblockedMarker(msg) {
 
 function autoFrameCamera() {
   if (occupiedPointsBuf.length === 0) return;
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of occupiedPointsBuf) {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
     if (p.y < minY) minY = p.y;
     if (p.y > maxY) maxY = p.y;
+    if (p.z < minZ) minZ = p.z;
     if (p.z > maxZ) maxZ = p.z;
   }
+  mapZMin = minZ;
+  mapZMax = maxZ;
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
   const span = Math.max(maxX - minX, maxY - minY);
@@ -346,6 +370,191 @@ function parsePointCloud2(msg) {
     });
   }
   return points;
+}
+
+// ===== Map Edit Functions =====
+function pickOccupied(event) {
+  updatePointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  if (occupiedPickMesh) {
+    const hits = raycaster.intersectObject(occupiedPickMesh);
+    if (hits.length > 0) return hits[0].point.clone();
+  }
+  return null;
+}
+
+function getBrushPositions(cx, cy, z) {
+  const sx = Math.round(cx / voxelSize) * voxelSize;
+  const sy = Math.round(cy / voxelSize) * voxelSize;
+  const sz = Math.round(z / voxelSize) * voxelSize;
+  const half = Math.floor(editBrushSize / 2);
+  const positions = [];
+  for (let dx = -half; dx <= half; dx++) {
+    for (let dy = -half; dy <= half; dy++) {
+      positions.push({
+        x: sx + dx * voxelSize,
+        y: sy + dy * voxelSize,
+        z: sz
+      });
+    }
+  }
+  return positions;
+}
+
+function buildPointCloud2(points) {
+  const pointStep = 12;
+  const buf = new ArrayBuffer(points.length * pointStep);
+  const dv = new DataView(buf);
+  for (let i = 0; i < points.length; i++) {
+    const off = i * pointStep;
+    dv.setFloat32(off, points[i].x, true);
+    dv.setFloat32(off + 4, points[i].y, true);
+    dv.setFloat32(off + 8, points[i].z, true);
+  }
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return {
+    header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
+    height: 1,
+    width: points.length,
+    fields: [
+      { name: 'x', offset: 0, datatype: 7, count: 1 },
+      { name: 'y', offset: 4, datatype: 7, count: 1 },
+      { name: 'z', offset: 8, datatype: 7, count: 1 }
+    ],
+    is_bigendian: false,
+    point_step: pointStep,
+    row_step: points.length * pointStep,
+    data: btoa(binary)
+  };
+}
+
+function applyLocalEdit(addPositions, removePositions) {
+  // Add occupied at target Z
+  const existing = new Set(occupiedPointsBuf.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  const toAdd = addPositions.filter(p => !existing.has(`${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  if (toAdd.length > 0) occupiedPointsBuf.push(...toAdd);
+
+  // Remove occupied within range of target Z
+  const removeSet = new Set(removePositions.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  if (removeSet.size > 0) {
+    occupiedPointsBuf = occupiedPointsBuf.filter(p => !removeSet.has(`${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  }
+
+  clearGroup(occupiedGroup);
+  const { group, pickMesh } = makeVoxelLayer(occupiedPointsBuf, 0xff7043, 0.92);
+  occupiedGroup.add(group);
+  occupiedPickMesh = pickMesh;
+}
+
+function flushEdits() {
+  const hasAdds = pendingAddPositions.length > 0 && addVoxelsTopic;
+  const hasRemoves = pendingRemovePositions.length > 0 && removeVoxelsTopic;
+  if (hasAdds) {
+    const msg = buildPointCloud2(pendingAddPositions);
+    addVoxelsTopic.publish(new ROSLIB.Message(msg));
+    log(`刷平: 添加 ${pendingAddPositions.length} 体素`, 'info');
+    pendingAddPositions = [];
+  }
+  if (hasRemoves) {
+    const msg = buildPointCloud2(pendingRemovePositions);
+    removeVoxelsTopic.publish(new ROSLIB.Message(msg));
+    log(`刷平: 清除 ${pendingRemovePositions.length} 体素`, 'info');
+    pendingRemovePositions = [];
+  }
+  if (editFlushTimer) { clearTimeout(editFlushTimer); editFlushTimer = null; }
+}
+
+function applyBrushEdit(event) {
+  const hit = pickOccupied(event);
+  if (!hit) return;
+  if (levelTargetZ === null) {
+    levelTargetZ = Math.round(hit.z / voxelSize) * voxelSize;
+    log(`刷平目标 Z=${levelTargetZ.toFixed(2)}m`, 'info');
+  }
+  const positions = getBrushPositions(hit.x, hit.y, levelTargetZ);
+
+  // Deduplicate pending adds
+  const addSet = new Set(pendingAddPositions.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  const newAdds = positions.filter(p => !addSet.has(`${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+
+  // Find voxels to remove within range at each brush XY
+  const allRemoves = [];
+  const rmKeySet = new Set(pendingRemovePositions.map(p => `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`));
+  for (const bp of positions) {
+    for (const p of occupiedPointsBuf) {
+      if (p.z < levelTargetZ - levelRange || p.z > levelTargetZ + levelRange) continue;
+      const dx = Math.abs(p.x - bp.x);
+      const dy = Math.abs(p.y - bp.y);
+      if (dx < voxelSize * 0.6 && dy < voxelSize * 0.6) {
+        const key = `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)}`;
+        if (!rmKeySet.has(key) && key !== `${bp.x.toFixed(4)},${bp.y.toFixed(4)},${bp.z.toFixed(4)}`) {
+          allRemoves.push({ x: p.x, y: p.y, z: p.z });
+          rmKeySet.add(key);
+        }
+      }
+    }
+  }
+
+  if (newAdds.length === 0 && allRemoves.length === 0) return;
+  pendingAddPositions.push(...newAdds);
+  pendingRemovePositions.push(...allRemoves);
+  applyLocalEdit(newAdds, allRemoves);
+  if (editFlushTimer) clearTimeout(editFlushTimer);
+  editFlushTimer = setTimeout(() => flushEdits(), 200);
+}
+
+function updateBrushPreview(event) {
+  clearBrushPreview();
+  const hit = pickOccupied(event);
+  if (!hit) return;
+  const z = levelTargetZ !== null ? levelTargetZ : Math.round(hit.z / voxelSize) * voxelSize;
+  const positions = getBrushPositions(hit.x, hit.y, z);
+  const size = voxelSize;
+  const geo = new THREE.BoxGeometry(size, size, size);
+  brushPreviewGroup = new THREE.Group();
+
+  // Green preview for the target Z plane (add)
+  const matAdd = new THREE.MeshBasicMaterial({ color: 0x66bb6a, transparent: true, opacity: 0.5 });
+  for (const p of positions) {
+    const mesh = new THREE.Mesh(geo, matAdd);
+    mesh.position.set(p.x, p.y, p.z);
+    brushPreviewGroup.add(mesh);
+  }
+
+  // Red wireframe for the clearance range (remove zone)
+  if (levelTargetZ !== null) {
+    const zMin = levelTargetZ - levelRange;
+    const zMax = levelTargetZ + levelRange;
+    const rangeHeight = zMax - zMin;
+    if (rangeHeight > 0) {
+      const rangeGeo = new THREE.BoxGeometry(size * 1.05, size * 1.05, rangeHeight);
+      const matRange = new THREE.MeshBasicMaterial({ color: 0xef5350, transparent: true, opacity: 0.15, wireframe: true });
+      for (const p of positions) {
+        const mesh = new THREE.Mesh(rangeGeo, matRange);
+        mesh.position.set(p.x, p.y, (zMin + zMax) / 2);
+        brushPreviewGroup.add(mesh);
+      }
+    }
+  }
+
+  markersGroup.add(brushPreviewGroup);
+}
+
+function clearBrushPreview() {
+  if (brushPreviewGroup) {
+    markersGroup.remove(brushPreviewGroup);
+    brushPreviewGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+    brushPreviewGroup = null;
+  }
+}
+
+function updateLevelRangeUI() {
+  const rngVal = document.getElementById('level-range-val');
+  if (rngVal) rngVal.textContent = levelRange.toFixed(1);
 }
 
 // ===== Path Rendering =====
@@ -513,6 +722,16 @@ function pickOnPlane(event, planeZ) {
 
 // ===== Placement Event Handlers =====
 function onCanvasPointerDown(event) {
+  if (editMode && event.button === 0) {
+    event.preventDefault();
+    controls.enabled = false;
+    canvas.setPointerCapture(event.pointerId);
+    pointerCaptured = true;
+    editDragging = true;
+    applyBrushEdit(event);
+    return;
+  }
+
   if (!placementMode || event.button !== 0) return;
 
   const hit = pickTraversable(event);
@@ -537,6 +756,17 @@ function clearDragPreview() {
 }
 
 function onCanvasPointerMove(event) {
+  if (editDragging) {
+    applyBrushEdit(event);
+    updateBrushPreview(event);
+    return;
+  }
+
+  if (editMode) {
+    updateBrushPreview(event);
+    return;
+  }
+
   if (!pointerCaptured || !dragStart) return;
 
   const endPt = pickOnPlane(event, dragPlaneZ);
@@ -563,6 +793,17 @@ function onCanvasPointerMove(event) {
 }
 
 function onCanvasPointerUp(event) {
+  if (editDragging) {
+    canvas.releasePointerCapture(event.pointerId);
+    pointerCaptured = false;
+    editDragging = false;
+    controls.enabled = true;
+    levelTargetZ = null;
+    clearBrushPreview();
+    flushEdits();
+    return;
+  }
+
   if (!pointerCaptured) return;
   canvas.releasePointerCapture(event.pointerId);
   pointerCaptured = false;
@@ -883,6 +1124,10 @@ function setupTopics() {
   startNavTopic = new ROSLIB.Topic({ ros, name: '/start_navigation', messageType: 'std_msgs/Bool' });
   stopNavTopic = new ROSLIB.Topic({ ros, name: '/stop_navigation', messageType: 'std_msgs/Bool' });
   cmdVelTopic = new ROSLIB.Topic({ ros, name: '/web_cmd_vel', messageType: 'geometry_msgs/Twist' });
+  addVoxelsTopic = new ROSLIB.Topic({ ros, name: '/add_occupied_voxels', messageType: 'sensor_msgs/PointCloud2' });
+  removeVoxelsTopic = new ROSLIB.Topic({ ros, name: '/remove_occupied_voxels', messageType: 'sensor_msgs/PointCloud2' });
+  saveMapTopic = new ROSLIB.Topic({ ros, name: '/save_octomap_path', messageType: 'std_msgs/String' });
+  loadMapTopic = new ROSLIB.Topic({ ros, name: '/load_map_file', messageType: 'std_msgs/String' });
 
   // Subscribers
   new ROSLIB.Topic({ ros, name: '/octomap_occupied_markers', messageType: 'visualization_msgs/Marker' })
@@ -954,6 +1199,7 @@ function resetMapData() {
   clearGroup(preblockedGroup);
   clearGroup(riskGroup);
   if (traversablePickMesh) { traversablePickMesh = null; }
+  if (occupiedPickMesh) { occupiedPickMesh = null; }
   log('已清空地图缓存', 'info');
 }
 
@@ -969,6 +1215,17 @@ riskGroup.visible = false;
 
 // ===== Button Event Wiring =====
 function setActivePlacementBtn(mode) {
+  if (mode && editMode) {
+    editMode = false;
+    const btn = document.getElementById('edit-mode-btn');
+    btn.classList.remove('active');
+    btn.textContent = '编辑地图';
+    document.getElementById('edit-controls').hidden = true;
+    levelTargetZ = null;
+    clearBrushPreview();
+    flushEdits();
+    requestMap();
+  }
   placementMode = mode;
   document.getElementById('set-start-btn').classList.toggle('active', mode === 'start');
   document.getElementById('set-goal-btn').classList.toggle('active', mode === 'goal');
@@ -1022,6 +1279,255 @@ joystickKnob.addEventListener('pointerup', onJoystickUp);
 joystickKnob.addEventListener('pointercancel', onJoystickUp);
 rotationSlider.addEventListener('input', onRotationInput);
 rotationSlider.addEventListener('change', onRotationRelease);
+
+// ===== Edit Mode Toggle =====
+document.getElementById('edit-mode-btn').addEventListener('click', () => {
+  editMode = !editMode;
+  const btn = document.getElementById('edit-mode-btn');
+  const controls = document.getElementById('edit-controls');
+  if (editMode) {
+    setActivePlacementBtn(null);
+    btn.classList.add('active');
+    btn.textContent = '退出编辑';
+    controls.hidden = false;
+    levelTargetZ = null;
+    updateLevelRangeUI();
+    log('进入地面刷平模式（点击占据体素设定目标Z）', 'info');
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '编辑地图';
+    controls.hidden = true;
+    levelTargetZ = null;
+    clearBrushPreview();
+    flushEdits();
+    requestMap();
+    log('退出地图编辑模式', 'info');
+  }
+});
+
+document.getElementById('brush-size').addEventListener('change', e => {
+  editBrushSize = Number(e.target.value);
+  clearBrushPreview();
+});
+
+document.getElementById('level-range-slider').addEventListener('input', e => {
+  levelRange = parseFloat(e.target.value);
+  updateLevelRangeUI();
+  clearBrushPreview();
+});
+
+// ===== File Browser =====
+let saveFBPath = '/home';
+let loadFBPath = '/home';
+let loadSelectedPath = '';
+
+async function apiCall(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    const isHtml = text.trimStart().startsWith('<!') || text.trimStart().startsWith('<html');
+    const hint = isHtml
+      ? '\n\n收到 HTML 响应，确认你用的是 python3 server.py 而非 python3 -m http.server'
+      : '';
+    throw new Error(`HTTP ${resp.status}${hint}`);
+  }
+  const ct = resp.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    const text = await resp.text().catch(() => '');
+    const isHtml = text.trimStart().startsWith('<!') || text.trimStart().startsWith('<html');
+    if (isHtml) throw new Error('收到 HTML 而非 JSON。请使用 python3 server.py 而非 python3 -m http.server');
+    throw new Error(`非 JSON 响应: ${text.substring(0, 120)}`);
+  }
+  return resp.json();
+}
+
+function showFbError(msg) {
+  log(`文件浏览错误: ${msg}`, 'err');
+  alert(`文件浏览失败\n${msg}\n\n请确认已停止旧服务，重新运行：\n  cd web && python3 server.py 8080`);
+}
+
+function fallbackTextInput(defaultPath, onConfirm) {
+  const path = prompt('文件路径:', defaultPath);
+  if (path && path.trim()) {
+    onConfirm(path.trim());
+  }
+}
+
+// ---- Save modal ----
+async function openSaveFB(initialDir) {
+  saveFBPath = initialDir || '/home';
+  let data;
+  try {
+    data = await apiCall(`/api/list?dir=${encodeURIComponent(saveFBPath)}`);
+  } catch (err) {
+    console.error('openSaveFB failed:', err);
+    showFbError(err.message);
+    document.getElementById('save-modal').hidden = false;
+    document.getElementById('save-fb-list').innerHTML = '';
+    document.getElementById('save-fb-path').textContent = saveFBPath + ' (加载失败)';
+    return;
+  }
+  if (data.error) { log(`目录错误: ${data.error}`, 'err'); return; }
+
+  const listEl = document.getElementById('save-fb-list');
+  const pathEl = document.getElementById('save-fb-path');
+
+  renderFBList(listEl, pathEl, data, (e, li) => {
+    if (e.type === 'dir') {
+      saveFBPath = e.path;
+      openSaveFB(saveFBPath);
+    }
+  }, saveFBPath);
+
+  document.getElementById('save-fb-name').value = 'map_edited.bt';
+  document.getElementById('save-modal').hidden = false;
+}
+
+function renderFBList(listEl, pathEl, data, onSelect, currentPath) {
+  listEl.innerHTML = '';
+  pathEl.textContent = currentPath || data.path;
+
+  for (const e of data.entries) {
+    const li = document.createElement('li');
+    const icon = document.createElement('span');
+    icon.className = 'fb-icon';
+    icon.textContent = e.type === 'dir' ? '\u{1F4C1}' : '\u{1F4C4}';
+
+    const name = document.createElement('span');
+    name.className = 'fb-name';
+    name.textContent = e.name;
+
+    li.appendChild(icon);
+    li.appendChild(name);
+
+    if (e.type === 'file') {
+      const size = document.createElement('span');
+      size.className = 'fb-size';
+      const kb = e.size / 1024;
+      size.textContent = kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb.toFixed(1)} KB`;
+      li.appendChild(size);
+    }
+
+    li.addEventListener('click', () => onSelect(e, li));
+    listEl.appendChild(li);
+  }
+}
+
+document.getElementById('save-fb-up').addEventListener('click', async () => {
+  let data;
+  try { data = await apiCall(`/api/list?dir=${encodeURIComponent(saveFBPath)}`); }
+  catch (err) { showFbError(err.message); return; }
+  if (data.parent) {
+    saveFBPath = data.parent;
+    openSaveFB(saveFBPath);
+  }
+});
+
+document.getElementById('save-map-btn').addEventListener('click', async () => {
+  let roots;
+  try { roots = await apiCall('/api/roots'); }
+  catch (err) { showFbError(err.message); fallbackTextInput('/tmp/map_edited.bt', p => { if (saveMapTopic) { saveMapTopic.publish(new ROSLIB.Message({ data: p })); log(`保存地图: ${p}`, 'ok'); }}); return; }
+  saveFBPath = (roots[1] || roots[0]).path;
+  openSaveFB(saveFBPath);
+});
+
+document.getElementById('save-cancel').addEventListener('click', () => {
+  document.getElementById('save-modal').hidden = true;
+});
+
+document.getElementById('save-confirm').addEventListener('click', () => {
+  document.getElementById('save-modal').hidden = true;
+  const fname = document.getElementById('save-fb-name').value.trim();
+  if (!fname) { log('请输入文件名', 'warn'); return; }
+  const fnameBT = fname.endsWith('.bt') ? fname : fname + '.bt';
+  const fullPath = saveFBPath + '/' + fnameBT;
+  if (saveMapTopic) {
+    saveMapTopic.publish(new ROSLIB.Message({ data: fullPath }));
+    log(`保存地图: ${fullPath}`, 'ok');
+  }
+});
+
+// ---- Load modal ----
+async function openLoadFB(initialDir) {
+  loadFBPath = initialDir || '/home';
+  let data;
+  try {
+    data = await apiCall(`/api/list?dir=${encodeURIComponent(loadFBPath)}`);
+  } catch (err) {
+    console.error('openLoadFB failed:', err);
+    showFbError(err.message);
+    document.getElementById('load-modal').hidden = false;
+    document.getElementById('load-fb-list').innerHTML = '';
+    document.getElementById('load-fb-path').textContent = loadFBPath + ' (加载失败)';
+    return;
+  }
+  if (data.error) { log(`目录错误: ${data.error}`, 'err'); return; }
+
+  const listEl = document.getElementById('load-fb-list');
+  const pathEl = document.getElementById('load-fb-path');
+  const confirmBtn = document.getElementById('load-confirm');
+  const selInfo = document.getElementById('load-selected-info');
+
+  renderFBList(listEl, pathEl, data, (e, li) => {
+    listEl.querySelectorAll('.selected').forEach(el => el.classList.remove('selected'));
+
+    if (e.type === 'dir') {
+      loadFBPath = e.path;
+      loadSelectedPath = '';
+      confirmBtn.disabled = true;
+      selInfo.textContent = '未选择文件';
+      openLoadFB(loadFBPath);
+    } else {
+      li.classList.add('selected');
+      loadSelectedPath = e.path;
+      confirmBtn.disabled = false;
+      selInfo.textContent = e.path;
+    }
+  }, loadFBPath);
+
+  confirmBtn.disabled = true;
+  selInfo.textContent = '未选择文件';
+  document.getElementById('load-modal').hidden = false;
+}
+
+document.getElementById('load-fb-up').addEventListener('click', async () => {
+  let data;
+  try { data = await apiCall(`/api/list?dir=${encodeURIComponent(loadFBPath)}`); }
+  catch (err) { showFbError(err.message); return; }
+  if (data.parent) {
+    loadFBPath = data.parent;
+    loadSelectedPath = '';
+    document.getElementById('load-confirm').disabled = true;
+    document.getElementById('load-selected-info').textContent = '未选择文件';
+    openLoadFB(loadFBPath);
+  }
+});
+
+document.getElementById('load-map-btn').addEventListener('click', async () => {
+  let roots;
+  try { roots = await apiCall('/api/roots'); }
+  catch (err) { showFbError(err.message); fallbackTextInput('/home/lenovo/Projects/NavProject/Dog3DNav/src/bringup/maps/map_nav3d.bt', p => { if (!loadMapTopic) { log('ROS 未连接，无法加载地图', 'err'); return; } resetMapData(); loadMapTopic.publish(new ROSLIB.Message({ data: p })); log(`加载地图: ${p}`, 'ok'); setTimeout(() => { if (requestMapService) requestMapService.callService({}, () => {}); }, 5000); }); return; }
+  loadFBPath = (roots[1] || roots[0]).path;
+  loadSelectedPath = '';
+  openLoadFB(loadFBPath);
+});
+
+document.getElementById('load-cancel').addEventListener('click', () => {
+  document.getElementById('load-modal').hidden = true;
+});
+
+document.getElementById('load-confirm').addEventListener('click', () => {
+  document.getElementById('load-modal').hidden = true;
+  if (!loadSelectedPath) { log('请先选择文件', 'warn'); return; }
+  if (!loadMapTopic) { log('ROS 未连接，无法加载地图', 'err'); return; }
+  resetMapData();
+  loadMapTopic.publish(new ROSLIB.Message({ data: loadSelectedPath }));
+  log(`加载地图: ${loadSelectedPath}`, 'ok');
+  setTimeout(() => {
+    if (requestMapService) requestMapService.callService({}, () => {});
+  }, 5000);
+});
+
 
 // ===== Resize =====
 function onResize() {
