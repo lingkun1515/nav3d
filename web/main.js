@@ -378,15 +378,27 @@ function pickOccupied(event) {
   raycaster.setFromCamera(pointer, camera);
   if (occupiedPickMesh) {
     const hits = raycaster.intersectObject(occupiedPickMesh);
-    if (hits.length > 0) return hits[0].point.clone();
+    if (hits.length > 0) {
+      // Use exact voxel center from buffer — the geometric hit point
+      // lies on the box surface which may snap to a different octomap key
+      const idx = hits[0].instanceId;
+      if (idx !== undefined && idx < occupiedPointsBuf.length) {
+        return occupiedPointsBuf[idx];
+      }
+      return hits[0].point.clone();
+    }
   }
   return null;
 }
 
+// Snap to octomap voxel center: (floor(coord/res) + 0.5) * res
+// Matches octomap's OcTreeKey → world coordinate convention
+function snapToGrid(v) { return (Math.floor(v / voxelSize) + 0.5) * voxelSize; }
+
 function getBrushPositions(cx, cy, z) {
-  const sx = Math.round(cx / voxelSize) * voxelSize;
-  const sy = Math.round(cy / voxelSize) * voxelSize;
-  const sz = Math.round(z / voxelSize) * voxelSize;
+  const sx = snapToGrid(cx);
+  const sy = snapToGrid(cy);
+  const sz = snapToGrid(z);
   const half = Math.floor(editBrushSize / 2);
   const positions = [];
   for (let dx = -half; dx <= half; dx++) {
@@ -472,7 +484,7 @@ function applyBrushEdit(event) {
   const hit = pickOccupied(event);
   if (!hit) return;
   if (levelTargetZ === null) {
-    levelTargetZ = Math.round(hit.z / voxelSize) * voxelSize;
+    levelTargetZ = snapToGrid(hit.z);
     log(`刷平目标 Z=${levelTargetZ.toFixed(2)}m`, 'info');
   }
   const positions = getBrushPositions(hit.x, hit.y, levelTargetZ);
@@ -511,7 +523,7 @@ function updateBrushPreview(event) {
   clearBrushPreview();
   const hit = pickOccupied(event);
   if (!hit) return;
-  const z = levelTargetZ !== null ? levelTargetZ : Math.round(hit.z / voxelSize) * voxelSize;
+  const z = levelTargetZ !== null ? levelTargetZ : snapToGrid(hit.z);
   const positions = getBrushPositions(hit.x, hit.y, z);
   const size = voxelSize;
   const geo = new THREE.BoxGeometry(size, size, size);
@@ -1224,7 +1236,8 @@ function setActivePlacementBtn(mode) {
     levelTargetZ = null;
     clearBrushPreview();
     flushEdits();
-    requestMap();
+    // delay reanalysis so ROS subscriber callbacks process pending edits first
+    setTimeout(() => requestMap(), 500);
   }
   placementMode = mode;
   document.getElementById('set-start-btn').classList.toggle('active', mode === 'start');
@@ -1300,7 +1313,8 @@ document.getElementById('edit-mode-btn').addEventListener('click', () => {
     levelTargetZ = null;
     clearBrushPreview();
     flushEdits();
-    requestMap();
+    // delay reanalysis so ROS subscriber callbacks process pending edits first
+    setTimeout(() => requestMap(), 500);
     log('退出地图编辑模式', 'info');
   }
 });

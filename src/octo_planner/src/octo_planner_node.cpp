@@ -330,7 +330,9 @@ private:
     sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
     int count = 0;
     for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
-      octree_->updateNode(*iter_x, *iter_y, *iter_z, true);
+      // setNodeValue replaces log-odds directly (definitive)
+      // vs updateNode which accumulates probabilistically
+      octree_->setNodeValue(*iter_x, *iter_y, *iter_z, 1.5f);
       count++;
     }
     if (count == 0) return;
@@ -346,7 +348,7 @@ private:
     sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
     int count = 0;
     for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
-      octree_->updateNode(*iter_x, *iter_y, *iter_z, false);
+      octree_->setNodeValue(*iter_x, *iter_y, *iter_z, -1.5f);
       count++;
     }
     if (count == 0) return;
@@ -563,6 +565,11 @@ private:
       size_t end = std::min(offset + MAX_POINTS_PER_MSG, all_points.size());
       marker.points.assign(all_points.begin() + offset, all_points.begin() + end);
       pub->publish(marker);
+      // Small delay between chunks prevents rosbridge WebSocket
+      // queue overflow when publishing large marker batches
+      if (end < all_points.size()) {
+        rclcpp::sleep_for(std::chrono::milliseconds(15));
+      }
     }
   }
 
@@ -573,12 +580,34 @@ private:
 
     std::vector<geometry_msgs::msg::Point> points;
     for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
-      if (octree_->isNodeOccupied(*it)) {
+      if (!octree_->isNodeOccupied(*it)) continue;
+
+      double size = it.getSize();
+      if (size <= res * 1.001f) {
+        // Regular max-depth leaf — center already grid-aligned
         geometry_msgs::msg::Point p;
         p.x = it.getX();
         p.y = it.getY();
         p.z = it.getZ();
         points.push_back(p);
+      } else {
+        // Pruned node — decompose into individual max-depth cell centers
+        int n = static_cast<int>(std::round(size / res));
+        double half_extent = (static_cast<double>(n) - 1.0) * 0.5 * res;
+        double cx = it.getX();
+        double cy = it.getY();
+        double cz = it.getZ();
+        for (int dx = 0; dx < n; ++dx) {
+          for (int dy = 0; dy < n; ++dy) {
+            for (int dz = 0; dz < n; ++dz) {
+              geometry_msgs::msg::Point p;
+              p.x = cx - half_extent + dx * res;
+              p.y = cy - half_extent + dy * res;
+              p.z = cz - half_extent + dz * res;
+              points.push_back(p);
+            }
+          }
+        }
       }
     }
 
