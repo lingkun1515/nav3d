@@ -607,6 +607,9 @@ private:
         pose.pose.position.z);
     }
     current_wp_idx_ = 0;
+    if (autonomyMode_) {
+      navigating_ = true;
+    }
     RCLCPP_INFO(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
   }
 

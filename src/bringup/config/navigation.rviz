@@ -195,34 +195,72 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /planned_path
       Value: true
-    - Alpha: 0.8999999761581421
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 0; 230; 118
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 0.8999999761581421
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 0; 230; 118
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Lines
+          Line Width: 0.05000000074505806
+          Name: LocalPath
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.07999999821186066
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /path
+          Value: true
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 4096
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: FreePaths
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 2
+          Size (m): 0.029999999329447746
+          Style: Points
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /free_paths
+          Use Fixed Frame: false
+          Use rainbow: false
+          Value: true
       Enabled: true
-      Head Diameter: 0.30000001192092896
-      Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
-      Line Style: Lines
-      Line Width: 0.05000000074505806
-      Name: LocalPath
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0.07999999821186066
-      Pose Color: 255; 85; 255
-      Pose Style: None
-      Radius: 0.029999999329447746
-      Shaft Diameter: 0.10000000149011612
-      Shaft Length: 0.10000000149011612
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /path
-      Value: true
+      Name: LocalPlanner
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -262,6 +300,8 @@ Visualization Manager:
         - Class: rviz_default_plugins/Marker
           Enabled: true
           Name: TraversableCells
+          Namespaces:
+            traversable_cells: true
           Topic:
             Depth: 50
             Durability Policy: Transient Local
@@ -273,6 +313,8 @@ Visualization Manager:
         - Class: rviz_default_plugins/Marker
           Enabled: true
           Name: PreblockedCells
+          Namespaces:
+            preblocked_cells: true
           Topic:
             Depth: 50
             Durability Policy: Transient Local
@@ -284,6 +326,8 @@ Visualization Manager:
         - Class: rviz_default_plugins/Marker
           Enabled: false
           Name: OccupiedVoxels
+          Namespaces:
+            {}
           Topic:
             Depth: 50
             Durability Policy: Transient Local
@@ -304,14 +348,14 @@ Visualization Manager:
           Color: 255; 255; 255
           Color Transformer: Intensity
           Decay Time: 0
-          Enabled: true
+          Enabled: false
           Invert Rainbow: false
           Max Color: 255; 255; 255
-          Max Intensity: 4096
+          Max Intensity: 0.75
           Min Color: 0; 0; 0
-          Min Intensity: 0
+          Min Intensity: 0.25
           Name: CostCloud
-          Position Transformer: ""
+          Position Transformer: XYZ
           Selectable: true
           Size (Pixels): 3
           Size (m): 0.10000000149011612
@@ -325,7 +369,7 @@ Visualization Manager:
             Value: /risk_cost_cells
           Use Fixed Frame: true
           Use rainbow: true
-          Value: true
+          Value: false
       Enabled: true
       Name: OctoMap
     - Class: rviz_default_plugins/Axes
@@ -370,25 +414,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 35.99137496948242
+      Distance: 14.224696159362793
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.7333187460899353
-        Y: -2.3816142082214355
-        Z: -0.36305347084999084
+        X: -12.63829231262207
+        Y: -2.65860915184021
+        Z: -1.4300590753555298
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9697969555854797
+      Pitch: 0.5497966408729553
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 4.716339111328125
+      Yaw: 4.6063313484191895
     Saved: ~
 Window Geometry:
   Displays:
@@ -396,9 +440,9 @@ Window Geometry:
   Height: 1403
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001cb00000521fc0200000002fb000000100044006900730070006c006100790073010000003d00000319000000c900fffffffb0000000a00560069006500770073010000035c00000202000000a400ffffff0000032f0000052100000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001a500000521fc0200000002fb000000100044006900730070006c006100790073010000003d00000319000000c900fffffffb0000000a00560069006500770073010000035c00000202000000a400ffffff000004240000052100000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
-  Width: 1280
+  Width: 1487
   X: 0
   Y: 0

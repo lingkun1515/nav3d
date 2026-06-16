@@ -159,8 +159,8 @@
 | `omniDirGoalThre` | double | `1.0` | 全向目标判定距离阈值 (m)。距离目标在此范围内时不做方向限制 |
 | `goalClearRange` | double | `0.5` | 目标清空范围 (m)。目标点周围此范围内无障碍物即视为到达 |
 | `goalBehindRange` | double | `0.8` | 目标后方距离 (m)。目标在机器人后方此距离内有效（用于双向行驶） |
-| `goalX` | double | `0.0` | 固定导航目标 X 坐标 (vehicle 帧)。`autonomyMode=true` 且无外部 waypoint 时使用 |
-| `goalY` | double | `0.0` | 固定导航目标 Y 坐标 (vehicle 帧) |
+| `goalX` | double | — | 内部状态：当前导航目标 X 坐标 (vehicle 帧)，由 `/way_point` 或 `/planned_path` 自动设置 |
+| `goalY` | double | — | 内部状态：当前导航目标 Y 坐标 (vehicle 帧) |
 
 #### 2.1.6 TF / 输入配置
 
