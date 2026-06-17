@@ -5,8 +5,6 @@ localPlanner:
     # Vehicle geometry
     vehicleLength: 0.4
     vehicleWidth: 0.3
-    sensorOffsetX: 0.0
-    sensorOffsetY: 0.0
     vehicleLengthSlot: 0.05
     vehicleWidthMargin: 0.05
     marginYawRateRatio: 0.0
@@ -75,8 +73,6 @@ pathFollower:
     realRobot: false
     serialPort: "/dev/ttyACM0"
     baudrate: 115200
-    sensorOffsetX: 0.0
-    sensorOffsetY: 0.0
     pubSkipNum: 1
 
     # Drive mode

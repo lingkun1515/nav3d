@@ -53,3 +53,16 @@ octo_planner_node:
     # Occupied cloud publishing (for corridor trust in localPlanner)
     # 0 = unlimited; set to e.g. 30.0 to only send voxels within this radius of robot
     occupied_cloud_radius: 10.0
+
+    # Online incremental OctoMap update from real-time point cloud
+    online_update_enabled: true
+    online_update_cloud_topic: "/lidar_points"
+    online_update_period_s: 60.0
+    online_update_occupied_prob: 0.7
+    # Conservative mode: instead of updating the voxel at the hit point,
+    # update the voxel behind along the sensor ray (inflates obstacles)
+    online_update_use_raycasting: true
+    online_update_conservative_mode: true
+    online_update_conservative_offset_m: 0.1
+    online_update_min_interval_ms: 500
+    online_update_downsample_step: 1

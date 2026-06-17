@@ -54,8 +54,6 @@ private:
     declare_parameter("realRobot", false);
     declare_parameter("serialPort", "/dev/ttyACM0");
     declare_parameter("baudrate", 115200);
-    declare_parameter("sensorOffsetX", 0.0);
-    declare_parameter("sensorOffsetY", 0.0);
     declare_parameter("pubSkipNum", 1);
     declare_parameter("twoWayDrive", true);
     declare_parameter("lookAheadDis", 0.5);
@@ -137,8 +135,6 @@ private:
     real_robot_ = get_parameter("realRobot").as_bool();
     serial_port_ = get_parameter("serialPort").as_string();
     baudrate_ = get_parameter("baudrate").as_int();
-    sensor_offset_x_ = get_parameter("sensorOffsetX").as_double();
-    sensor_offset_y_ = get_parameter("sensorOffsetY").as_double();
     pub_skip_num_ = get_parameter("pubSkipNum").as_int();
     two_way_drive_ = get_parameter("twoWayDrive").as_bool();
     look_ahead_dis_ = get_parameter("lookAheadDis").as_double();
@@ -190,8 +186,8 @@ private:
     vehicle_roll_ = roll;
     vehicle_pitch_ = pitch;
     vehicle_yaw_ = yaw;
-    vehicle_x_ = odom->pose.pose.position.x - std::cos(yaw) * sensor_offset_x_ + std::sin(yaw) * sensor_offset_y_;
-    vehicle_y_ = odom->pose.pose.position.y - std::sin(yaw) * sensor_offset_x_ - std::cos(yaw) * sensor_offset_y_;
+    vehicle_x_ = odom->pose.pose.position.x;
+    vehicle_y_ = odom->pose.pose.position.y;
     vehicle_z_ = odom->pose.pose.position.z;
 
     if (use_incl_to_stop_) {
@@ -484,7 +480,6 @@ private:
   bool real_robot_{false};
   std::string serial_port_{"/dev/ttyACM0"};
   int baudrate_{115200};
-  double sensor_offset_x_{0}, sensor_offset_y_{0};
   int pub_skip_num_{1};
   bool two_way_drive_{true};
   double look_ahead_dis_{0.5};

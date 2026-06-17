@@ -18,6 +18,8 @@ find_package(std_srvs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(octomap REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_sensor_msgs REQUIRED)
 find_package(PCL REQUIRED COMPONENTS io common)
 find_package(Eigen3 REQUIRED)
 find_library(TINYXML2_LIB tinyxml2 REQUIRED)
@@ -100,6 +102,8 @@ ament_target_dependencies(octo_planner_node
   std_srvs
   visualization_msgs
   octomap_msgs
+  tf2_ros
+  tf2_sensor_msgs
 )
 
 target_link_libraries(octo_planner_node

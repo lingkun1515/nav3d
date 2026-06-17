@@ -40,6 +40,11 @@ octo_planner::on_online_reanalyze()
 | `online_update_cloud_topic` | `"/lidar_points"` | 订阅的点云话题 |
 | `online_update_period_s` | `60.0` | reanalyze + republish 周期 |
 | `online_update_occupied_prob` | `0.7` | updateNode 的占据概率（对数几率累积） |
+| `online_update_use_raycasting` | `false` | 启用 `insertPointCloud` 射线追踪模式：标记占用端点的同时清空传感器到端点之间的 free space |
+| `online_update_conservative_mode` | `false` | 保守更新模式：沿射线方向将点云端点向后推 `conservative_offset_m` 再标记占据 |
+| `online_update_conservative_offset_m` | `0.1` | 保守模式外推距离 (m)。命中点沿射线方向向后推此距离再标记占据 |
+| `online_update_min_interval_ms` | `500` | 两次云处理最短间隔 (ms)。0 = 每帧都处理；500 = 最多 2 Hz |
+| `online_update_downsample_step` | `1` | 点云抽稀步长。2 = 隔 1 取 1；3 = 每 3 点取 1；1 = 不抽稀 |
 
 全部在 `planner_params.yaml` 中配置。
 
@@ -62,9 +67,19 @@ if (get_parameter("online_update_enabled").as_bool()) {
 
 ### `on_online_cloud(msg)` — 实时体素插入
 
-1. TF 查询（`tf_buffer_->lookupTransform(map_frame, cloud_frame, ...)`）→ `tf2::doTransform`
-2. 遍历变换后的点云，对每个点调用 `octree_->updateNode(x, y, z, prob_to_log_odds)`
-3. `octree_->updateInnerOccupancy()`
+支持两种模式，由 `online_update_use_raycasting` 切换：
+
+**Raycasting 模式** (`use_raycasting=true`)：
+1. TF 变换点云到 map 系，同时获取传感器原点
+2. 构建 `octomap::Pointcloud`，调用 `octree_->insertPointCloud(points, sensor_origin, -1, false, false)`
+3. `insertPointCloud` 内部从传感器原点到每个端点做射线追踪：射线经过的体素标记为 free，端点标记为占据（log-odds 累积）
+4. 保守模式在此模式下自动跳过（射线清空与保守外推互斥）
+
+**手动模式** (`use_raycasting=false`)：
+1. TF 变换点云到 map 系
+2. 遍历每个点，调用 `octree_->updateNode(x, y, z, log_odds)`
+3. 可选保守外推：沿射线方向将标记位置向后推 `conservative_offset_m`
+4. `octree_->updateInnerOccupancy()`
 
 ### `on_online_reanalyze()` — 定时重分析
 
@@ -94,13 +109,33 @@ rclcpp::TimerBase::SharedPtr online_update_timer_;
 
 `updateNode` 以对数几率累积证据，单次观测不会立即标记为占据。概率 0.7 对应 log-odds ≈ 0.85，一次观测即可越过高阈值，但与 `setNodeValue(1.5)` 不同，后续负观测可以抵消（`setNodeValue` 直接覆盖，不支持证据消退）。
 
-### 2. 不做 Raycasting
+### 2. Raycasting 模式（`insertPointCloud`）
 
-简化的体素插入（不追踪传感器射线清空中间空间）可能产生"拖尾"——传感器穿越的空白区域不会被 mark as free。这在以下场景中无影响：
+启用 `online_update_use_raycasting` 后，使用 OctoMap 的 `insertPointCloud` API，从传感器原点向每个点云端点投射射线：
 
-- 标记占据体素本身已经足够用于走廊信任的查表
-- 全局路径规划依赖 OctoMap 占据体素，free space 由可通行性分析推断
-- 如需完整 free-space 更新，后续可扩展为 `insertPointCloud(sensor_origin, point_cloud)`
+- 射线穿过的体素 → `updateNode(log_odds_free)` 标记为空闲（log_odds 递减）
+- 射线端点 → `updateNode(log_odds_occupied)` 标记为占据（log_odds 递增）
+- 多次观测累积后，空闲证据会抵消占据证据，实现自然的动态障碍物消退
+
+**与手动模式的区别**：
+| | 手动模式 | Raycasting 模式 |
+|---|---|---|
+| 空闲空间更新 | 无（仅标记占据端点） | 有（射线轨迹清空） |
+| 动态障碍物消退 | 需依赖 reanalyze 后占据云更新 | 射线自带负证据累积 |
+| 性能 | O(N) 遍历+updateNode | O(N×R) 射线遍历，R≈射线长度/分辨率 |
+| 保守模式兼容 | ✓ 可选外推 | ✓ 外推后射线追踪（端点后移 → 占据+清空同步后移） |
+
+### 2.5. 保守模式（Ray-behind push）
+
+当 `online_update_conservative_mode=true` 时，对每个命中点沿传感器→命中点方向向后推 `online_update_conservative_offset_m` 米。
+
+- **手动模式**：外推后的位置直接 `updateNode` 标记占据
+- **Raycasting 模式**：外推后的位置作为 `insertPointCloud` 的端点——传感器到外推点之间的空间被清空，外推点标记占据。效果是将整个"占据标记 + free-space 清空"同步后移，实现障碍物深度膨胀
+
+```
+正常模式： sensor ──→ [hit at voxel A]   → 标记 voxel A 为占据
+保守模式： sensor ──→ [hit at voxel A] ──offset→ [voxel B] → 标记 voxel B 为占据
+```
 
 ### 3. Reanalyze 周期 60s
 

@@ -65,8 +65,6 @@ private:
     declare_parameter<std::string>("pathFolder", "");
     declare_parameter("vehicleLength", 0.4);
     declare_parameter("vehicleWidth", 0.4);
-    declare_parameter("sensorOffsetX", 0.0);
-    declare_parameter("sensorOffsetY", 0.0);
     declare_parameter("vehicleLengthSlot", 0.05);
     declare_parameter("vehicleWidthMargin", 0.1);
     declare_parameter("marginYawRateRatio", 0.0);
@@ -202,8 +200,6 @@ private:
     pathFolder_ = get_parameter("pathFolder").as_string();
     vehicleLength_ = get_parameter("vehicleLength").as_double();
     vehicleWidth_ = get_parameter("vehicleWidth").as_double();
-    sensorOffsetX_ = get_parameter("sensorOffsetX").as_double();
-    sensorOffsetY_ = get_parameter("sensorOffsetY").as_double();
     vehicleLengthSlot_ = get_parameter("vehicleLengthSlot").as_double();
     vehicleWidthMargin_ = get_parameter("vehicleWidthMargin").as_double();
     marginYawRateRatio_ = get_parameter("marginYawRateRatio").as_double();
@@ -442,8 +438,8 @@ private:
     vehiclePitch_ = pitch;
     vehicleYaw_ = yaw;
     vehicleYawRate_ = odom->twist.twist.angular.z;
-    vehicleX_ = odom->pose.pose.position.x - std::cos(yaw) * sensorOffsetX_ + std::sin(yaw) * sensorOffsetY_;
-    vehicleY_ = odom->pose.pose.position.y - std::sin(yaw) * sensorOffsetX_ - std::cos(yaw) * sensorOffsetY_;
+    vehicleX_ = odom->pose.pose.position.x;
+    vehicleY_ = odom->pose.pose.position.y;
     vehicleZ_ = odom->pose.pose.position.z;
   }
 
@@ -1301,7 +1297,6 @@ private:
   // ---- parameters ----
   std::string pathFolder_;
   double vehicleLength_, vehicleWidth_;
-  double sensorOffsetX_, sensorOffsetY_;
   double vehicleLengthSlot_, vehicleWidthMargin_, marginYawRateRatio_;
   bool twoWayDrive_;
   double laserVoxelSize_, terrainVoxelSize_;

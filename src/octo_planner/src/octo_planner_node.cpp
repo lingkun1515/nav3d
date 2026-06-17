@@ -21,7 +21,12 @@
 #include "octomap_msgs/conversions.h"
 #include "octomap/AbstractOcTree.h"
 #include "octomap/OcTree.h"
+#include "octomap/Pointcloud.h"
 
+
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
 
 #include "pcd2octomap_converter.h"
 #include "global_planner.h"
@@ -80,6 +85,16 @@ private:
     declare_parameter("auto_save_bt", true);
     declare_parameter("world_xy_window_size_m", 24.0);
     declare_parameter("occupied_cloud_radius", 0.0);
+
+    declare_parameter("online_update_enabled", false);
+    declare_parameter("online_update_cloud_topic", "/lidar_points");
+    declare_parameter("online_update_period_s", 60.0);
+    declare_parameter("online_update_occupied_prob", 0.7);
+    declare_parameter("online_update_conservative_mode", false);
+    declare_parameter("online_update_conservative_offset_m", 0.1);
+    declare_parameter("online_update_use_raycasting", false);
+    declare_parameter("online_update_min_interval_ms", 500);
+    declare_parameter("online_update_downsample_step", 1);
   }
 
   void setup_pub_sub()
@@ -157,6 +172,36 @@ private:
       republish_timer_ = create_wall_timer(
         std::chrono::duration<double>(period),
         [this]() { republish_all(); });
+    }
+
+    // TF for online update (always created — lightweight)
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
+    if (get_parameter("online_update_enabled").as_bool()) {
+      online_update_cloud_topic_ = get_parameter("online_update_cloud_topic").as_string();
+      online_update_period_s_ = get_parameter("online_update_period_s").as_double();
+      online_update_occupied_prob_ = get_parameter("online_update_occupied_prob").as_double();
+      conservative_mode_ = get_parameter("online_update_conservative_mode").as_bool();
+      conservative_offset_ = get_parameter("online_update_conservative_offset_m").as_double();
+      use_raycasting_ = get_parameter("online_update_use_raycasting").as_bool();
+      min_interval_ms_ = get_parameter("online_update_min_interval_ms").as_int();
+      downsample_step_ = get_parameter("online_update_downsample_step").as_int();
+
+      online_cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+        online_update_cloud_topic_, rclcpp::QoS(5).best_effort(),
+        [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) { on_online_cloud(msg); });
+
+      online_update_timer_ = create_wall_timer(
+        std::chrono::duration<double>(online_update_period_s_),
+        [this]() { on_online_reanalyze(); });
+
+      RCLCPP_INFO(get_logger(),
+        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s offset=%.3fm interval=%dms downsample=%d",
+        online_update_cloud_topic_.c_str(), online_update_period_s_, online_update_occupied_prob_,
+        use_raycasting_ ? "on" : "off",
+        conservative_mode_ ? "on" : "off", conservative_offset_,
+        min_interval_ms_, downsample_step_);
     }
   }
 
@@ -810,6 +855,145 @@ private:
                 count, use_radius ? " (radius-limited)" : "");
   }
 
+  // ---- online incremental update ----
+
+  void on_online_cloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+  {
+    if (!octree_) return;
+
+    // Throttle: skip if within min_interval since last processed cloud
+    auto now = get_clock()->now();
+    if (min_interval_ms_ > 0) {
+      auto elapsed = (now - last_cloud_time_).seconds() * 1000.0;
+      if (elapsed < min_interval_ms_) return;
+    }
+    last_cloud_time_ = now;
+
+    std::string map_frame = get_parameter("frame_id").as_string();
+    std::string cloud_frame = msg->header.frame_id;
+
+    if (cloud_frame.empty()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "Online cloud has empty frame_id, skipping");
+      return;
+    }
+
+    // Transform cloud to map frame; capture sensor origin for conservative push
+    sensor_msgs::msg::PointCloud2 cloud_map;
+    double sensor_x = 0, sensor_y = 0, sensor_z = 0;
+    try {
+      auto transform = tf_buffer_->lookupTransform(
+        map_frame, cloud_frame, msg->header.stamp,
+        rclcpp::Duration::from_seconds(0.1));
+      tf2::doTransform(*msg, cloud_map, transform);
+      sensor_x = transform.transform.translation.x;
+      sensor_y = transform.transform.translation.y;
+      sensor_z = transform.transform.translation.z;
+    } catch (const tf2::TransformException & e) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "Online cloud TF failed (%s → %s): %s",
+        cloud_frame.c_str(), map_frame.c_str(), e.what());
+      return;
+    }
+
+    if (use_raycasting_) {
+      // Raycasting mode: cast rays from sensor to each point, clearing
+      // free space along rays and marking occupied at endpoints.
+      // When conservative mode is also enabled, push endpoints backward
+      // along the sensor ray before raycasting — inflating obstacle depth.
+      octomap::Pointcloud octo_cloud;
+      octo_cloud.reserve(static_cast<size_t>(cloud_map.width * cloud_map.height));
+
+      sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
+      sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
+      sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
+
+      double offset = get_parameter("online_update_conservative_offset_m").as_double();
+      bool conservative = get_parameter("online_update_conservative_mode").as_bool();
+
+      for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
+        if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
+
+        double px = *iter_x, py = *iter_y, pz = *iter_z;
+
+        if (conservative && offset > 0.0) {
+          double dx = px - sensor_x;
+          double dy = py - sensor_y;
+          double dz = pz - sensor_z;
+          double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+          if (len > 0.001) {
+            px += dx / len * offset;
+            py += dy / len * offset;
+            pz += dz / len * offset;
+          }
+        }
+
+        octo_cloud.push_back(octomap::point3d(
+          static_cast<float>(px), static_cast<float>(py), static_cast<float>(pz)));
+      }
+
+      if (octo_cloud.size() > 0) {
+        octree_->insertPointCloud(octo_cloud,
+          octomap::point3d(static_cast<float>(sensor_x),
+                           static_cast<float>(sensor_y),
+                           static_cast<float>(sensor_z)),
+          -1.0, false, false);
+        RCLCPP_DEBUG(get_logger(), "Online update (raycasting): %zu points integrated%s",
+                     octo_cloud.size(), conservative ? " [conservative push]" : "");
+      }
+    } else {
+      // Manual updateNode mode — no raycasting, no free-space clearing.
+      // Supports conservative ray-behind push.
+      double prob = get_parameter("online_update_occupied_prob").as_double();
+      float log_odds = static_cast<float>(std::log(prob / (1.0 - prob)));
+
+      sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
+      sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
+      sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
+
+      int count = 0;
+      double offset = get_parameter("online_update_conservative_offset_m").as_double();
+      bool conservative = get_parameter("online_update_conservative_mode").as_bool();
+
+      for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
+        if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
+
+        double px = *iter_x, py = *iter_y, pz = *iter_z;
+
+        if (conservative && offset > 0.0) {
+          double dx = px - sensor_x;
+          double dy = py - sensor_y;
+          double dz = pz - sensor_z;
+          double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+          if (len > 0.001) {
+            px += dx / len * offset;
+            py += dy / len * offset;
+            pz += dz / len * offset;
+          }
+        }
+
+        octree_->updateNode(static_cast<float>(px),
+                            static_cast<float>(py),
+                            static_cast<float>(pz), log_odds);
+        count++;
+      }
+
+      if (count > 0) {
+        octree_->updateInnerOccupancy();
+        RCLCPP_DEBUG(get_logger(), "Online update: %d points integrated (log_odds=%.3f)",
+                     count, log_odds);
+      }
+    }
+  }
+
+  void on_online_reanalyze()
+  {
+    if (!map_ready_) return;
+    RCLCPP_INFO(get_logger(), "Online reanalyze triggered...");
+    planner_->reanalyze();
+    republish_all();
+  }
+
   // Members
   std::unique_ptr<pcd2octomap::Pcd2OctomapConverter> converter_;
   std::unique_ptr<global_planner::GlobalPlanner> planner_;
@@ -844,6 +1028,21 @@ private:
 
   rclcpp::TimerBase::SharedPtr republish_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_map_srv_;
+
+  // Online incremental update
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr online_cloud_sub_;
+  rclcpp::TimerBase::SharedPtr online_update_timer_;
+  double online_update_period_s_{60.0};
+  double online_update_occupied_prob_{0.7};
+  std::string online_update_cloud_topic_{"/lidar_points"};
+  bool conservative_mode_{false};
+  double conservative_offset_{0.1};
+  bool use_raycasting_{false};
+  int min_interval_ms_{500};
+  int downsample_step_{1};
+  rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
 };
 
 int main(int argc, char ** argv)

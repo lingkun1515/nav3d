@@ -78,6 +78,23 @@
 |------|------|------|------|
 | `auto_publish_enabled` | bool | `false` | 是否启用定时自动重发地图数据。`false` 时 Web 前端需通过 `/request_map` 服务手动获取或点击「获取地图」按钮 |
 | `octomap_publish_period_s` | double | `5.0` | 自动发布周期 (s)。仅在 `auto_publish_enabled=true` 时生效 |
+| `occupied_cloud_radius` | double | `0.0` | 占据云发布半径 (m)。仅将以此半径内的占据体素发布到 `/octomap_occupied_cloud`；0 = 不裁剪，发布全部 |
+
+### 1.9 在线增量更新
+
+实时点云 → 增量更新 OctoMap 占据体素 → 定时重分析，用于导航中自动发现新障碍物。
+
+| 参数 | 类型 | 默认 | 含义 |
+|------|------|------|------|
+| `online_update_enabled` | bool | `false` | 总开关。开启后订阅点云话题持续更新 OctoMap |
+| `online_update_cloud_topic` | string | `"/lidar_points"` | 订阅的点云话题名 |
+| `online_update_period_s` | double | `60.0` | reanalyze + republish 间隔 (s) |
+| `online_update_occupied_prob` | double | `0.7` | updateNode 的占据概率（对数几率累积） |
+| `online_update_use_raycasting` | bool | `false` | 启用 insertPointCloud 射线追踪：标记占据端点的同时清空射线路径 free space |
+| `online_update_conservative_mode` | bool | `false` | 保守更新模式：沿射线方向将点云端点向后推 `conservative_offset_m` 再标记占据 |
+| `online_update_conservative_offset_m` | double | `0.1` | 保守模式外推距离 (m) |
+| `online_update_min_interval_ms` | int | `500` | 两次点云处理的最短间隔 (ms)。0 = 不降频，每帧都处理 |
+| `online_update_downsample_step` | int | `1` | 点云抽稀步长。2 = 隔点采样，3 = 每 3 点取 1。1 = 不抽稀 |
 
 ---
 
@@ -100,9 +117,7 @@
 |------|------|------|------|
 | `vehicleLength` | double | `0.4` | 车辆/机器人长度 (m)，用于碰撞检测的投影矩形 |
 | `vehicleWidth` | double | `0.4` | 车辆/机器人宽度 (m)，用于碰撞检测的投影矩形 |
-| `sensorOffsetX` | double | `0.0` | 传感器相对 vehicle 坐标系原点的 X 偏移 (m) |
-| `sensorOffsetY` | double | `0.0` | 传感器相对 vehicle 坐标系原点的 Y 偏移 (m) |
-| `vehicleLengthSlot` | double | `0.05` | 碰撞检测时车身 XY 投影的格化步长 (m)。更小的值更精确但计算量更大 |
+| `vehicleLengthSlot` | double | `0.05` | 车身周边检测的前后区分界偏移 (m)。X ∈ [slot, length/2] 为前方区域，X ∈ [-length/2, -slot] 为后方区域 |
 | `vehicleWidthMargin` | double | `0.1` | 车身宽度安全余量 (m)。车身投影两侧各扩展该值，防止贴边碰撞 |
 | `marginYawRateRatio` | double | `0.0` | 横摆角速度对安全余量的放大系数。高速旋转时增大有效宽度 |
 | `twoWayDrive` | bool | `true` | 是否支持双向行驶。开启后路径方向与当前朝向相反时自动切换前进/后退 |
@@ -117,11 +132,11 @@
 | `checkObstacle` | bool | `true` | 是否启用障碍物检测。关闭后所有路径视为无碰（仅调试用） |
 | `checkRotObstacle` | bool | `false` | 是否在旋转时也做障碍物检测 |
 | `adjacentRange` | double | `3.5` | 障碍物检测的最大范围 (m)。超过此距离的点云不做碰撞判断 |
-| `obstacleHeightThre` | double | `0.2` | 障碍物判定高度阈值 (m)。点高于地面此值视为障碍物 |
-| `groundHeightThre` | double | `0.1` | 地面判定高度阈值 (m)。点低于地面此值视为地面（可通行） |
-| `costHeightThre1` | double | `0.15` | 代价地形高度阈值一 (m)。地面以上该范围内为低代价地形 |
-| `costHeightThre2` | double | `0.1` | 代价地形高度阈值二 (m)。地面以上该范围内为更低代价地形 |
-| `useCost` | bool | `false` | 是否启用路径代价评估。开启后对地形高度变化附加代价 |
+| `obstacleHeightThre` | double | `0.2` | 障碍物高度阈值 (m)。仅在 `useTerrainAnalysis=true` 时生效，否则所有点都视为障碍物（Z 过滤靠 `minRelZ`/`maxRelZ`） |
+| `groundHeightThre` | double | `0.1` | 地面高度变化阈值 (m)。仅在 `useTerrainAnalysis=true` 且 `useCost=true` 时生效 |
+| `costHeightThre1` | double | `0.15` | 代价地形高度阈值一 (m)。仅在 `useTerrainAnalysis=true` 时生效，控制减速等级 1 触发 |
+| `costHeightThre2` | double | `0.1` | 代价地形高度阈值二 (m)。仅在 `useTerrainAnalysis=true` 时生效，控制减速等级 2 触发 |
+| `useCost` | bool | `false` | 是否启用路径代价评估。仅在 `useTerrainAnalysis=true` 时生效 |
 
 #### 2.1.4 路径评分
 
@@ -189,8 +204,6 @@
 | `realRobot` | bool | `false` | 是否使用真实机器人串口通信。`false` 时仅通过 ROS topic `/cmd_vel` 输出（Twist 类型，非 TwistStamped） |
 | `serialPort` | string | `"/dev/ttyACM0"` | 串口设备路径。仅 `realRobot=true` 时生效 |
 | `baudrate` | int | `115200` | 串口波特率 |
-| `sensorOffsetX` | double | `0.0` | 传感器 X 偏移 (m)，用于坐标补偿 |
-| `sensorOffsetY` | double | `0.0` | 传感器 Y 偏移 (m)，用于坐标补偿 |
 | `pubSkipNum` | int | `1` | 指令发布间隔（帧数）。设为 2 则隔帧发布，降低指令频率 |
 
 #### 2.2.2 驱动模式

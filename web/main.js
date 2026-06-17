@@ -220,6 +220,7 @@ let occupiedRenderTimer = null;
 let traversableRenderTimer = null;
 let preblockedRenderTimer = null;
 let mapLoaded = { occupied: false, traversable: false, preblocked: false, risk: false };
+let mapRepublishing = { occupied: false, traversable: false };
 const CHUNK_COLLECT_MS = 800;
 
 // Edit mode state
@@ -237,7 +238,10 @@ let mapZMax = 5;
 
 function setOccupiedMarker(msg) {
   if (!msg.points || msg.points.length === 0) return;
-  if (msg.id === 0) occupiedPointsBuf = [];
+  if (msg.id === 0) {
+    if (mapLoaded.occupied) mapRepublishing.occupied = true;
+    occupiedPointsBuf = [];
+  }
   occupiedPointsBuf.push(...msg.points);
   if (occupiedRenderTimer) clearTimeout(occupiedRenderTimer);
   occupiedRenderTimer = setTimeout(() => {
@@ -248,6 +252,9 @@ function setOccupiedMarker(msg) {
     if (!mapLoaded.occupied) {
       mapLoaded.occupied = true;
       log(`占据层: ${occupiedPointsBuf.length} 体素`, 'info');
+    } else if (mapRepublishing.occupied) {
+      mapRepublishing.occupied = false;
+      log(`占据层: 已刷新 — ${occupiedPointsBuf.length} 体素`, 'info');
     }
     updateMapProgress();
     autoFrameCamera();
@@ -257,7 +264,10 @@ function setOccupiedMarker(msg) {
 
 function setTraversableMarker(msg) {
   if (!msg.points || msg.points.length === 0) return;
-  if (msg.id === 0) traversablePointsBuf = [];
+  if (msg.id === 0) {
+    if (mapLoaded.traversable) mapRepublishing.traversable = true;
+    traversablePointsBuf = [];
+  }
   traversablePointsBuf.push(...msg.points);
   if (traversableRenderTimer) clearTimeout(traversableRenderTimer);
   traversableRenderTimer = setTimeout(() => {
@@ -268,6 +278,9 @@ function setTraversableMarker(msg) {
     if (!mapLoaded.traversable) {
       mapLoaded.traversable = true;
       log(`可通行层: ${traversablePointsBuf.length} 体素`, 'info');
+    } else if (mapRepublishing.traversable) {
+      mapRepublishing.traversable = false;
+      log(`可通行层: 已刷新 — ${traversablePointsBuf.length} 体素`, 'info');
     }
     updateMapProgress();
     traversableRenderTimer = null;
@@ -275,7 +288,6 @@ function setTraversableMarker(msg) {
 }
 
 function setPreblockedMarker(msg) {
-  if (mapLoaded.preblocked) return;
   if (!msg.points || msg.points.length === 0) return;
   if (msg.id === 0) preblockedPointsBuf = [];
   preblockedPointsBuf.push(...msg.points);
@@ -284,8 +296,9 @@ function setPreblockedMarker(msg) {
     clearGroup(preblockedGroup);
     const { group } = makeVoxelLayer(preblockedPointsBuf, 0xb388ff, 0.90);
     preblockedGroup.add(group);
+    const wasLoaded = mapLoaded.preblocked;
     mapLoaded.preblocked = true;
-    log(`禁行层: ${preblockedPointsBuf.length} 体素`, 'info');
+    log(wasLoaded ? `禁行层: 已刷新 — ${preblockedPointsBuf.length} 体素` : `禁行层: ${preblockedPointsBuf.length} 体素`, 'info');
     updateMapProgress();
     preblockedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
@@ -314,10 +327,10 @@ function autoFrameCamera() {
 }
 
 function setRiskCostCloud(msg) {
-  if (mapLoaded.risk) return;
   clearGroup(riskGroup);
   const points = parsePointCloud2(msg);
   if (!points || points.length === 0) return;
+  const isRepublish = mapLoaded.risk;
   mapLoaded.risk = true;
 
   const size = voxelSize;
@@ -332,7 +345,7 @@ function setRiskCostCloud(msg) {
     mesh.position.set(p.x, p.y, p.z);
     riskGroup.add(mesh);
   }
-  log(`代价层: ${points.length} 点`, 'info');
+  log(isRepublish ? `代价层: 已刷新 — ${points.length} 点` : `代价层: ${points.length} 点`, 'info');
   updateMapProgress();
 }
 
