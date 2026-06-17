@@ -63,14 +63,40 @@ def load_pcd(filepath):
     return np.array(points, dtype=np.float64) if points else np.zeros((0, 3))
 
 
-def load_octomap_bt(filepath, resolution=0.2):
+def _parse_bt_header(filepath):
+    """Extract resolution and tree_depth from .bt file header."""
+    import re
+    with open(filepath, 'rb') as f:
+        header = f.read(512).decode('ascii', errors='ignore')
+
+    m = re.search(r'^res\s+([\d.]+)', header, re.MULTILINE)
+    if not m:
+        print("Error: could not find 'res' in .bt header", file=sys.stderr)
+        sys.exit(1)
+    resolution = float(m.group(1))
+
+    tree_depth = 16
+    m = re.search(r'^tree_depth\s+(\d+)', header, re.MULTILINE)
+    if m:
+        tree_depth = int(m.group(1))
+
+    return resolution, tree_depth
+
+
+def load_octomap_bt(filepath):
     """Load .bt OctoMap binary, extract occupied leaf centers.
 
     Pure Python implementation — no external OctoMap dependency needed.
+    Resolution and tree_depth are read from the .bt header; voxel centers
+    follow the OctoMap convention: center = (key + 0.5) * resolution.
+
     OctoMap binary format: 2 bytes per node, encoding 8 children (2 bits each):
       00 = no child, 01 = free leaf, 10 = occupied leaf, 11 = inner node.
-    Depth-first traversal; tree_depth defaults to 16.
+    Depth-first traversal.
     """
+    resolution, tree_depth = _parse_bt_header(filepath)
+    print(f"  .bt native resolution: {resolution}m, tree_depth: {tree_depth}")
+
     with open(filepath, 'rb') as f:
         data = f.read()
 
@@ -85,7 +111,6 @@ def load_octomap_bt(filepath, resolution=0.2):
         pos[0] += 2
         return lo, hi
 
-    tree_depth = 16
     root_size = resolution * (1 << tree_depth)
     occupied = []
 
@@ -117,24 +142,32 @@ def load_octomap_bt(filepath, resolution=0.2):
         print("Error: no occupied voxels found in .bt file", file=sys.stderr)
         sys.exit(1)
 
-    return np.array(occupied, dtype=np.float64)
+    return np.array(occupied, dtype=np.float64), resolution
 
 
 def voxelize(points, resolution):
-    """Snap points to voxel grid, return unique voxel centers."""
+    """Snap points to voxel grid, return unique voxel centers at (key+0.5)*res.
+
+    For OctoMap .bt input the leaf centres already sit at (key+0.5)*res so
+    floor recovers the exact integer key without aliasing.  For arbitrary PCD
+    input, floor maps each point to the voxel that contains it.
+    """
     if len(points) == 0:
         return points
-    indices = np.round(points / resolution).astype(int)
-    unique_indices = np.unique(indices, axis=0)
-    return unique_indices.astype(float) * resolution
+    keys = np.floor(points / resolution).astype(int)
+    unique_keys = np.unique(keys, axis=0)
+    return (unique_keys.astype(float) + 0.5) * resolution
 
 
 def greedy_merge_boxes(voxels, resolution):
-    """Greedily merge adjacent voxels into larger boxes along X axis first."""
+    """Merge adjacent voxels into axis-aligned rectangular boxes.
+
+    voxels must be voxel centers at (key + 0.5) * resolution.
+    """
     if len(voxels) == 0:
         return []
 
-    voxel_set = set(map(tuple, np.round(voxels / resolution).astype(int)))
+    voxel_set = set(map(tuple, np.floor(voxels / resolution).astype(int)))
     visited = set()
     boxes = []
 
@@ -179,10 +212,10 @@ def greedy_merge_boxes(voxels, resolution):
                 for zi in range(v[2], z_end + 1):
                     visited.add((xi, yi, zi))
 
-        # Compute box center and size
-        cx = (v[0] + x_end) / 2.0 * resolution
-        cy = (v[1] + y_end) / 2.0 * resolution
-        cz = (v[2] + z_end) / 2.0 * resolution
+        # Box center at the midpoint of the merged block
+        cx = ((v[0] + x_end) * 0.5 + 0.5) * resolution
+        cy = ((v[1] + y_end) * 0.5 + 0.5) * resolution
+        cz = ((v[2] + z_end) * 0.5 + 0.5) * resolution
         sx = (x_end - v[0] + 1) * resolution
         sy = (y_end - v[1] + 1) * resolution
         sz = (z_end - v[2] + 1) * resolution
@@ -220,9 +253,9 @@ def generate_world_sdf(boxes, ground_z=0.0):
     <include>
       <uri>model://sun</uri>
     </include>
-    <include>
+    <!-- <include>
       <uri>model://ground_plane</uri>
-    </include>
+    </include> -->
 
     <physics type="ode">
       <max_step_size>0.002</max_step_size>
@@ -275,8 +308,13 @@ def main():
         sys.exit(1)
 
     print(f"Loading {input_path.suffix} file: {args.input}")
+    out_res = args.resolution
     if input_path.suffix.lower() == '.bt':
-        points = load_octomap_bt(args.input, args.resolution)
+        points, native_res = load_octomap_bt(args.input)
+        if out_res < native_res - 1e-6:
+            print(f"Warning: --resolution {out_res} < native {native_res}, "
+                  f"clamping to {native_res} (cannot upsample detail)")
+            out_res = native_res
     else:
         points = load_pcd(args.input)
 
@@ -287,17 +325,17 @@ def main():
     print(f"Loaded {len(points)} points")
 
     # Voxelize
-    voxels = voxelize(points, args.resolution)
-    print(f"Voxelized to {len(voxels)} voxels at resolution {args.resolution}m")
+    voxels = voxelize(points, out_res)
+    print(f"Voxelized to {len(voxels)} voxels at resolution {out_res}m")
 
     # Filter by Z range
     if args.ground_z is not None:
-        mask = voxels[:, 2] > args.ground_z + args.resolution * 0.5
+        mask = voxels[:, 2] > args.ground_z + out_res * 0.5
         voxels = voxels[mask]
     else:
         # Auto-detect: remove lowest Z layer (ground)
         min_z = voxels[:, 2].min()
-        mask = voxels[:, 2] > min_z + args.resolution * 0.5
+        mask = voxels[:, 2] > min_z + out_res * 0.5
         voxels = voxels[mask]
         print(f"Auto-excluded ground layer at z={min_z:.2f}")
 
@@ -312,7 +350,7 @@ def main():
         print(f"Warning: {len(voxels)} voxels is very large, merging may be slow")
 
     # Merge into boxes
-    boxes = greedy_merge_boxes(voxels, args.resolution)
+    boxes = greedy_merge_boxes(voxels, out_res)
     print(f"Merged into {len(boxes)} boxes")
 
     if len(boxes) > args.max_boxes:

@@ -73,7 +73,7 @@ def generate_launch_description():
             description='Map file (.bt/.pcd/.ot/.world/.sdf), default bringup/maps/map_nav3d.bt',
         ),
         DeclareLaunchArgument(
-            'launch_rviz', default_value='false',
+            'launch_rviz', default_value='true',
             description='Launch RViz2 with the navigation config',
         ),
         DeclareLaunchArgument(
