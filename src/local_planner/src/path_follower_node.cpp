@@ -86,6 +86,7 @@ private:
     declare_parameter("autonomyMode", false);
     declare_parameter("autonomySpeed", 1.0);
     declare_parameter("joyToSpeedDelay", 2.0);
+    declare_parameter("corridor_tilt_threshold", 60.0);
   }
 
   void setup_pub_sub()
@@ -123,6 +124,10 @@ private:
     sub_sur_block_ = create_subscription<std_msgs::msg::Int8>(
       "/surrounding_block", qos,
       [this](std_msgs::msg::Int8::ConstSharedPtr msg) { sur_block_callback(msg); });
+
+    sub_near_corridor_ = create_subscription<std_msgs::msg::Bool>(
+      "/near_corridor", qos,
+      [this](std_msgs::msg::Bool::ConstSharedPtr msg) { near_corridor_ = msg->data; });
 
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", qos);
   }
@@ -164,6 +169,7 @@ private:
     autonomy_mode_ = get_parameter("autonomyMode").as_bool();
     autonomy_speed_ = get_parameter("autonomySpeed").as_double();
     joy_to_speed_delay_ = get_parameter("joyToSpeedDelay").as_double();
+    corridor_tilt_threshold_ = get_parameter("corridor_tilt_threshold").as_double();
 
     if (autonomy_mode_) {
       joy_speed_ = autonomy_speed_ / max_speed_;
@@ -188,8 +194,13 @@ private:
     vehicle_y_ = odom->pose.pose.position.y - std::sin(yaw) * sensor_offset_x_ - std::cos(yaw) * sensor_offset_y_;
     vehicle_z_ = odom->pose.pose.position.z;
 
-    if ((std::abs(roll) > incl_thre_ * PI / 180.0 || std::abs(pitch) > incl_thre_ * PI / 180.0) && use_incl_to_stop_) {
-      stop_init_time_ = rclcpp::Time(odom->header.stamp).seconds();
+    if (use_incl_to_stop_) {
+      double effective_thre = (near_corridor_ && corridor_tilt_threshold_ > 0)
+        ? corridor_tilt_threshold_ : incl_thre_;
+      if (std::abs(roll) > effective_thre * PI / 180.0 ||
+          std::abs(pitch) > effective_thre * PI / 180.0) {
+        stop_init_time_ = rclcpp::Time(odom->header.stamp).seconds();
+      }
     }
 
     if ((std::abs(odom->twist.twist.angular.x) > incl_rate_thre_ * PI / 180.0 ||
@@ -498,9 +509,11 @@ private:
   bool autonomy_mode_{false};
   double autonomy_speed_{1.0};
   double joy_to_speed_delay_{2.0};
+  double corridor_tilt_threshold_{60.0};
 
   // ---- state ----
   float joy_speed_{0}, joy_speed_raw_{0}, joy_yaw_{0};
+  bool near_corridor_{false};
   float joy_manual_fwd_{0}, joy_manual_left_{0}, joy_manual_yaw_{0};
   bool manual_mode_{false};
   int safety_stop_{0};
@@ -540,6 +553,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_stop_nav_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_slow_down_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_sur_block_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_near_corridor_;
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
 

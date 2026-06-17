@@ -49,3 +49,7 @@ octo_planner_node:
     auto_save_bt: true
     # XY window for world/sdf loading (0 = no cropping)
     world_xy_window_size_m: 24.0
+
+    # Occupied cloud publishing (for corridor trust in localPlanner)
+    # 0 = unlimited; set to e.g. 30.0 to only send voxels within this radius of robot
+    occupied_cloud_radius: 0.0

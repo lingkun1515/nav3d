@@ -22,6 +22,7 @@
 #include "octomap/AbstractOcTree.h"
 #include "octomap/OcTree.h"
 
+
 #include "pcd2octomap_converter.h"
 #include "global_planner.h"
 #include "world_loader.hpp"
@@ -78,6 +79,7 @@ private:
     declare_parameter("auto_publish_enabled", false);
     declare_parameter("auto_save_bt", true);
     declare_parameter("world_xy_window_size_m", 24.0);
+    declare_parameter("occupied_cloud_radius", 0.0);
   }
 
   void setup_pub_sub()
@@ -95,6 +97,8 @@ private:
       "/preblocked_cells_markers", qos_tl_marker);
     risk_cost_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       "/risk_cost_cells", qos_tl);
+    occupied_cloud_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/octomap_occupied_cloud", qos_tl);
     path_pub_ = create_publisher<nav_msgs::msg::Path>("/planned_path", qos_tl);
 
     start_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(
@@ -408,6 +412,7 @@ private:
     publish_traversable_markers();
     publish_preblocked_markers();
     publish_risk_cost_cloud();
+    publish_occupied_cloud();
 
     RCLCPP_INFO(get_logger(), "Map loaded and published. Ready for planning.");
   }
@@ -532,6 +537,7 @@ private:
     publish_traversable_markers();
     publish_preblocked_markers();
     publish_risk_cost_cloud();
+    publish_occupied_cloud();
   }
 
   static constexpr size_t MAX_POINTS_PER_MSG = 5000;
@@ -698,6 +704,112 @@ private:
     risk_cost_pub_->publish(cloud);
   }
 
+  static bool in_radius(double px, double py, double pz,
+                         double cx, double cy, double cz, double r2)
+  {
+    double dx = px - cx, dy = py - cy, dz = pz - cz;
+    return dx * dx + dy * dy + dz * dz <= r2;
+  }
+
+  void publish_occupied_cloud()
+  {
+    if (!octree_) return;
+
+    double res = octree_->getResolution();
+    double radius = get_parameter("occupied_cloud_radius").as_double();
+
+    // When radius is set and we have odometry, only publish voxels near the robot
+    bool use_radius = (radius > 0.001) && has_odom_;
+    double r2 = radius * radius;
+    double rcx = 0, rcy = 0, rcz = 0;
+    if (use_radius) {
+      rcx = latest_odom_.pose.pose.position.x;
+      rcy = latest_odom_.pose.pose.position.y;
+      rcz = latest_odom_.pose.pose.position.z;
+    }
+
+    // Count points within radius
+    size_t count = 0;
+    for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+      if (!octree_->isNodeOccupied(*it)) continue;
+      double size = it.getSize();
+      if (size <= res * 1.001f) {
+        if (use_radius && !in_radius(it.getX(), it.getY(), it.getZ(), rcx, rcy, rcz, r2)) continue;
+        count++;
+      } else {
+        int n = static_cast<int>(std::round(size / res));
+        double half_extent = (static_cast<double>(n) - 1.0) * 0.5 * res;
+        double cx = it.getX(), cy = it.getY(), cz = it.getZ();
+        for (int dx = 0; dx < n; ++dx) {
+          for (int dy = 0; dy < n; ++dy) {
+            for (int dz = 0; dz < n; ++dz) {
+              if (use_radius && !in_radius(
+                    cx - half_extent + dx * res,
+                    cy - half_extent + dy * res,
+                    cz - half_extent + dz * res, rcx, rcy, rcz, r2)) continue;
+              count++;
+            }
+          }
+        }
+      }
+    }
+
+    sensor_msgs::msg::PointCloud2 cloud;
+    cloud.header.stamp = now();
+    cloud.header.frame_id = get_parameter("frame_id").as_string();
+    cloud.height = 1;
+    cloud.width = static_cast<uint32_t>(count);
+    cloud.is_dense = true;
+    cloud.is_bigendian = false;
+
+    sensor_msgs::PointCloud2Modifier modifier(cloud);
+    modifier.setPointCloud2Fields(3,
+      "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+      "z", 1, sensor_msgs::msg::PointField::FLOAT32);
+    modifier.resize(count);
+
+    sensor_msgs::PointCloud2Iterator<float> iter_x(cloud, "x");
+    sensor_msgs::PointCloud2Iterator<float> iter_y(cloud, "y");
+    sensor_msgs::PointCloud2Iterator<float> iter_z(cloud, "z");
+
+    // Fill point cloud (same radius filter)
+    for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+      if (!octree_->isNodeOccupied(*it)) continue;
+      double size = it.getSize();
+      if (size <= res * 1.001f) {
+        double px = it.getX(), py = it.getY(), pz = it.getZ();
+        if (use_radius && !in_radius(px, py, pz, rcx, rcy, rcz, r2)) continue;
+        *iter_x = static_cast<float>(px);
+        *iter_y = static_cast<float>(py);
+        *iter_z = static_cast<float>(pz);
+        ++iter_x; ++iter_y; ++iter_z;
+      } else {
+        int n = static_cast<int>(std::round(size / res));
+        double half_extent = (static_cast<double>(n) - 1.0) * 0.5 * res;
+        double cx = it.getX(), cy = it.getY(), cz = it.getZ();
+        for (int dx = 0; dx < n; ++dx) {
+          for (int dy = 0; dy < n; ++dy) {
+            for (int dz = 0; dz < n; ++dz) {
+              double px = cx - half_extent + dx * res;
+              double py = cy - half_extent + dy * res;
+              double pz = cz - half_extent + dz * res;
+              if (use_radius && !in_radius(px, py, pz, rcx, rcy, rcz, r2)) continue;
+              *iter_x = static_cast<float>(px);
+              *iter_y = static_cast<float>(py);
+              *iter_z = static_cast<float>(pz);
+              ++iter_x; ++iter_y; ++iter_z;
+            }
+          }
+        }
+      }
+    }
+
+    occupied_cloud_pub_->publish(cloud);
+    RCLCPP_INFO(get_logger(), "Published occupied cloud: %zu points%s",
+                count, use_radius ? " (radius-limited)" : "");
+  }
+
   // Members
   std::unique_ptr<pcd2octomap::Pcd2OctomapConverter> converter_;
   std::unique_ptr<global_planner::GlobalPlanner> planner_;
@@ -716,6 +828,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr traversable_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr preblocked_marker_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr risk_cost_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupied_cloud_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
 
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr start_sub_;

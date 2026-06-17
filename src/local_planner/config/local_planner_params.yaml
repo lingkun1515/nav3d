@@ -4,13 +4,13 @@ localPlanner:
 
     # Vehicle geometry
     vehicleLength: 0.4
-    vehicleWidth: 0.4
+    vehicleWidth: 0.3
     sensorOffsetX: 0.0
     sensorOffsetY: 0.0
     vehicleLengthSlot: 0.05
     vehicleWidthMargin: 0.1
     marginYawRateRatio: 0.0
-    twoWayDrive: true
+    twoWayDrive: false
 
     # Perception
     laserVoxelSize: 0.05
@@ -19,7 +19,7 @@ localPlanner:
     checkObstacle: true
     checkRotObstacle: false
     adjacentRange: 3.5
-    obstacleHeightThre: 0.2
+    obstacleHeightThre: 0.15
     groundHeightThre: 0.1
     costHeightThre1: 0.15
     costHeightThre2: 0.1
@@ -30,8 +30,8 @@ localPlanner:
     slowGroupNumThre: 1
     surPointThre: 2
     pointPerPathThre: 2
-    minRelZ: -0.5
-    maxRelZ: 0.25
+    minRelZ: -0.3
+    maxRelZ: 0.4
     maxSpeed: 1.0
     dirWeight: 0.02
     dirThre: 90.0
@@ -62,6 +62,13 @@ localPlanner:
     waypoint_lookahead: 2.5
     waypoint_tolerance: 0.5
 
+    # Corridor trust — trust known static geometry near global path (stairs)
+    corridor_trust_mode: true
+    corridor_slope_threshold: 0.15
+    corridor_xy_margin: 0.5
+    corridor_z_margin: 0.3
+    octomap_voxel_resolution: 0.1
+
 pathFollower:
   ros__parameters:
     # Hardware
@@ -73,7 +80,7 @@ pathFollower:
     pubSkipNum: 1
 
     # Drive mode
-    twoWayDrive: true
+    twoWayDrive: false
 
     # Pure-pursuit
     lookAheadDis: 0.5
@@ -105,6 +112,7 @@ pathFollower:
     stopTime: 5.0
     noRotAtStop: false
     noRotAtGoal: true
+    corridor_tilt_threshold: 60.0
 
     # Autonomy
     autonomyMode: false

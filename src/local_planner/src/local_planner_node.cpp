@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -116,6 +117,12 @@ private:
     declare_parameter("use_laser_scan", false);
     declare_parameter("waypoint_lookahead", 2.5);
     declare_parameter("waypoint_tolerance", 0.5);
+
+    declare_parameter("corridor_trust_mode", false);
+    declare_parameter("corridor_slope_threshold", 0.15);
+    declare_parameter("corridor_xy_margin", 0.5);
+    declare_parameter("corridor_z_margin", 0.3);
+    declare_parameter("octomap_voxel_resolution", 0.1);
   }
 
   void setup_pub_sub()
@@ -180,6 +187,12 @@ private:
     pub_sur_block_ = create_publisher<std_msgs::msg::Int8>("/surrounding_block", qos);
     pub_path_ = create_publisher<nav_msgs::msg::Path>("/path", qos);
     pub_free_paths_ = create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths", rclcpp::QoS(2));
+
+    sub_octomap_cloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+      "/octomap_occupied_cloud", rclcpp::QoS(1).transient_local(),
+      [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) { octomap_cloud_callback(msg); });
+
+    pub_near_corridor_ = create_publisher<std_msgs::msg::Bool>("/near_corridor", rclcpp::QoS(5));
   }
 
   // ---- parameter accessors ----
@@ -238,6 +251,12 @@ private:
     use_laser_scan_ = get_parameter("use_laser_scan").as_bool();
     waypoint_lookahead_ = get_parameter("waypoint_lookahead").as_double();
     waypoint_tolerance_ = get_parameter("waypoint_tolerance").as_double();
+
+    corridor_trust_mode_ = get_parameter("corridor_trust_mode").as_bool();
+    corridor_slope_threshold_ = get_parameter("corridor_slope_threshold").as_double();
+    corridor_xy_margin_ = get_parameter("corridor_xy_margin").as_double();
+    corridor_z_margin_ = get_parameter("corridor_z_margin").as_double();
+    octomap_voxel_resolution_ = get_parameter("octomap_voxel_resolution").as_double();
 
     // Init autonomy speed
     if (autonomyMode_) {
@@ -610,6 +629,7 @@ private:
     if (autonomyMode_) {
       navigating_ = true;
     }
+    detect_corridor_segments();
     RCLCPP_INFO(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
   }
 
@@ -687,6 +707,100 @@ private:
     }
   }
 
+  // ---- corridor trust: OctoMap cloud + stair detection ----
+
+  std::string encode_voxel(double x, double y, double z) const
+  {
+    int ix = static_cast<int>(std::round(x / octomap_voxel_resolution_));
+    int iy = static_cast<int>(std::round(y / octomap_voxel_resolution_));
+    int iz = static_cast<int>(std::round(z / octomap_voxel_resolution_));
+    return std::to_string(ix) + "_" + std::to_string(iy) + "_" + std::to_string(iz);
+  }
+
+  void octomap_cloud_callback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
+  {
+    pcl::PointCloud<pcl::PointXYZ> cloud;
+    pcl::fromROSMsg(*msg, cloud);
+    octomap_occupied_set_.clear();
+    for (const auto & pt : cloud) {
+      octomap_occupied_set_.insert(encode_voxel(pt.x, pt.y, pt.z));
+    }
+    has_octomap_cloud_ = true;
+    RCLCPP_INFO(get_logger(), "OctoMap occupied set: %zu voxels", octomap_occupied_set_.size());
+  }
+
+  struct CorridorSegment {
+    double min_x, max_x, min_y, max_y;
+    double min_z, max_z;
+    bool active = true;
+  };
+
+  void detect_corridor_segments()
+  {
+    corridor_segments_.clear();
+    if (!corridor_trust_mode_ || planned_waypoints_.size() < 2) return;
+
+    CorridorSegment cur;
+    bool in_seg = false;
+
+    for (size_t i = 1; i < planned_waypoints_.size(); i++) {
+      double dx = std::get<0>(planned_waypoints_[i]) - std::get<0>(planned_waypoints_[i-1]);
+      double dy = std::get<1>(planned_waypoints_[i]) - std::get<1>(planned_waypoints_[i-1]);
+      double dz = std::get<2>(planned_waypoints_[i]) - std::get<2>(planned_waypoints_[i-1]);
+      double dxy = std::hypot(dx, dy);
+      bool is_sloped = (dxy > 0.01 && std::abs(dz) / dxy > corridor_slope_threshold_);
+
+      if (is_sloped && !in_seg) {
+        in_seg = true;
+        double wx = std::get<0>(planned_waypoints_[i-1]);
+        double wy = std::get<1>(planned_waypoints_[i-1]);
+        double wz = std::get<2>(planned_waypoints_[i-1]);
+        cur.min_x = cur.max_x = wx;
+        cur.min_y = cur.max_y = wy;
+        cur.min_z = cur.max_z = wz;
+        cur.active = true;
+      }
+
+      if (in_seg) {
+        double wx = std::get<0>(planned_waypoints_[i]);
+        double wy = std::get<1>(planned_waypoints_[i]);
+        double wz = std::get<2>(planned_waypoints_[i]);
+        cur.min_x = std::min(cur.min_x, wx);
+        cur.max_x = std::max(cur.max_x, wx);
+        cur.min_y = std::min(cur.min_y, wy);
+        cur.max_y = std::max(cur.max_y, wy);
+        cur.min_z = std::min(cur.min_z, wz);
+        cur.max_z = std::max(cur.max_z, wz);
+
+        if (!is_sloped || i == planned_waypoints_.size() - 1) {
+          cur.min_x -= corridor_xy_margin_;
+          cur.max_x += corridor_xy_margin_;
+          cur.min_y -= corridor_xy_margin_;
+          cur.max_y += corridor_xy_margin_;
+          cur.min_z -= corridor_z_margin_;
+          cur.max_z += corridor_z_margin_;
+          corridor_segments_.push_back(cur);
+          in_seg = false;
+        }
+      }
+    }
+
+    RCLCPP_INFO(get_logger(), "Detected %zu corridor segments", corridor_segments_.size());
+  }
+
+  bool in_corridor(double wx, double wy, double wz) const
+  {
+    for (const auto & seg : corridor_segments_) {
+      if (!seg.active) continue;
+      if (wx >= seg.min_x && wx <= seg.max_x &&
+          wy >= seg.min_y && wy <= seg.max_y &&
+          wz >= seg.min_z && wz <= seg.max_z) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---- main processing loop (100 Hz) ----
 
   void process_loop()
@@ -710,8 +824,17 @@ private:
     float cosYaw = std::cos(vehicleYaw_);
 
     // Transform points to vehicle frame
+    bool use_corridor = corridor_trust_mode_ && has_octomap_cloud_ && !corridor_segments_.empty();
     plannerCloudCrop_->clear();
     for (const auto & pt : plannerCloud_->points) {
+      // Corridor trust: skip known static geometry near the global path
+      if (use_corridor && in_corridor(pt.x, pt.y, pt.z)) {
+        if (octomap_occupied_set_.count(encode_voxel(pt.x, pt.y, pt.z)) > 0) {
+          continue;  // static geometry the global planner already knows → trust it
+        }
+        // point in corridor but NOT in OctoMap → new dynamic obstacle → keep it
+      }
+
       float px = pt.x - vehicleX_;
       float py = pt.y - vehicleY_;
       float pz = pt.z - vehicleZ_;
@@ -1166,6 +1289,13 @@ private:
       freePaths2.header.frame_id = "base_link";
       pub_free_paths_->publish(freePaths2);
     }
+
+    // Publish whether robot is near a trusted corridor (for pathFollower tilt adapt)
+    if (corridor_trust_mode_ && !corridor_segments_.empty()) {
+      std_msgs::msg::Bool near_msg;
+      near_msg.data = in_corridor(vehicleX_, vehicleY_, vehicleZ_);
+      pub_near_corridor_->publish(near_msg);
+    }
   }
 
   // ---- parameters ----
@@ -1203,6 +1333,16 @@ private:
   bool use_laser_scan_;
   double waypoint_lookahead_;
   double waypoint_tolerance_;
+
+  // Corridor trust
+  bool corridor_trust_mode_ = false;
+  double corridor_slope_threshold_ = 0.15;
+  double corridor_xy_margin_ = 0.5;
+  double corridor_z_margin_ = 0.3;
+  double octomap_voxel_resolution_ = 0.1;
+  std::vector<CorridorSegment> corridor_segments_;
+  std::unordered_set<std::string> octomap_occupied_set_;
+  bool has_octomap_cloud_ = false;
 
   // ---- state ----
   float joySpeed_ = 0, joySpeedRaw_ = 0, joyDir_ = 0;
@@ -1258,11 +1398,13 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr sub_boundary_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_added_obstacles_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_check_obstacle_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_octomap_cloud_;
 
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_slow_down_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_sur_block_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_free_paths_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_near_corridor_;
 
   rclcpp::TimerBase::SharedPtr process_timer_;
 

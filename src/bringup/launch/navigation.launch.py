@@ -137,6 +137,7 @@ def generate_launch_description():
                     {'use_laser_scan': False},
                     {'use_planned_path': True},
                     {'global_frame_id': 'map'},
+                    {'corridor_trust_mode': True},
                 ],
                 remappings=[
                     ('/state_estimation', '/odom'),
