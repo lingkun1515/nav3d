@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="urban2">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <include>
+      <uri>model://urban2_story</uri>
+    </include>
+
+    <physics type="ode">
+      <max_step_size>0.002</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>500</real_time_update_rate>
+    </physics>
+
+    <gravity>0 0 -9.81</gravity>
+    <gui fullscreen="0">
+      <camera name="follow_camera">
+        <pose>0 0 2 0 0 0</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+        <track_visual>
+          <name>diff_drive_robot</name>
+          <use_model_frame>true</use_model_frame>
+          <min_dist>1</min_dist>
+          <max_dist>50</max_dist>
+          <static>false</static>
+        </track_visual>
+      </camera>
+    </gui>
+  </world>
+</sdf>

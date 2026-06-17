@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="urban_2story_lights">
+    <static>true</static>
+    <include>
+      <name>urban_2story</name>
+      <uri>model://urban_2_story</uri>
+    </include>
+
+    <link name="light1">
+      <!-- 一楼大厅：大范围向下聚光灯 + 环境点光 -->
+      <light type="spot" name="downstairs_main">
+        <pose>0 -5 7.4 0 0 0</pose>
+        <diffuse>1.8 1.8 1.8 1</diffuse>
+        <specular>0.6 0.6 0.6 1</specular>
+        <direction>0 0 -1</direction>
+        <attenuation>
+          <range>40</range>
+          <linear>0.1</linear>
+          <constant>1.0</constant>
+          <quadratic>0.005</quadratic>
+        </attenuation>
+        <spot>
+          <inner_angle>1.2</inner_angle>
+          <outer_angle>2.0</outer_angle>
+          <falloff>0.5</falloff>
+        </spot>
+        <cast_shadows>false</cast_shadows>
+      </light>
+      <light type="point" name="downstairs_fill">
+        <pose>0 3 5.0 0 0 0</pose>
+        <diffuse>0.8 0.8 1.0 1</diffuse>
+        <specular>0.2 0.2 0.2 1</specular>
+        <attenuation>
+          <range>30</range>
+          <linear>0.05</linear>
+          <constant>1.0</constant>
+          <quadratic>0.01</quadratic>
+        </attenuation>
+        <cast_shadows>false</cast_shadows>
+      </light>
+
+      <!-- 二楼走廊：向下聚光灯 + 环境点光 -->
+      <light type="spot" name="upstairs_corridor_1">
+        <pose>7.2 -2.6 17.4 0 0 0</pose>
+        <diffuse>1.8 1.8 1.8 1</diffuse>
+        <specular>0.6 0.6 0.6 1</specular>
+        <direction>0 0 -1</direction>
+        <attenuation>
+          <range>30</range>
+          <linear>0.1</linear>
+          <constant>1.0</constant>
+          <quadratic>0.005</quadratic>
+        </attenuation>
+        <spot>
+          <inner_angle>1.0</inner_angle>
+          <outer_angle>2.0</outer_angle>
+          <falloff>0.5</falloff>
+        </spot>
+        <cast_shadows>false</cast_shadows>
+      </light>
+      <light type="spot" name="upstairs_corridor_2">
+        <pose>0 10.7 17.4 0 0 0</pose>
+        <diffuse>1.8 1.8 1.8 1</diffuse>
+        <specular>0.6 0.6 0.6 1</specular>
+        <direction>0 0 -1</direction>
+        <attenuation>
+          <range>30</range>
+          <linear>0.1</linear>
+          <constant>1.0</constant>
+          <quadratic>0.005</quadratic>
+        </attenuation>
+        <spot>
+          <inner_angle>1.0</inner_angle>
+          <outer_angle>2.0</outer_angle>
+          <falloff>0.5</falloff>
+        </spot>
+        <cast_shadows>false</cast_shadows>
+      </light>
+      <light type="spot" name="upstairs_corridor_3">
+        <pose>-14.8 10.7 17.4 0 0 0</pose>
+        <diffuse>1.8 1.8 1.8 1</diffuse>
+        <specular>0.6 0.6 0.6 1</specular>
+        <direction>0 0 -1</direction>
+        <attenuation>
+          <range>30</range>
+          <linear>0.1</linear>
+          <constant>1.0</constant>
+          <quadratic>0.005</quadratic>
+        </attenuation>
+        <spot>
+          <inner_angle>1.0</inner_angle>
+          <outer_angle>2.0</outer_angle>
+          <falloff>0.5</falloff>
+        </spot>
+        <cast_shadows>false</cast_shadows>
+      </light>
+      <light type="point" name="upstairs_fill">
+        <pose>0 0 15.0 0 0 0</pose>
+        <diffuse>0.8 0.8 1.0 1</diffuse>
+        <specular>0.2 0.2 0.2 1</specular>
+        <attenuation>
+          <range>40</range>
+          <linear>0.03</linear>
+          <constant>1.0</constant>
+          <quadratic>0.008</quadratic>
+        </attenuation>
+        <cast_shadows>false</cast_shadows>
+      </light>
+    </link>
+  </model>
+</sdf>

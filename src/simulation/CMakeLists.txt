@@ -11,6 +11,10 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models")
+  install(DIRECTORY models DESTINATION share/${PROJECT_NAME})
+endif()
+
 install(PROGRAMS
   scripts/pcd_to_world.py
   DESTINATION share/${PROJECT_NAME}/scripts

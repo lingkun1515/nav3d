@@ -43,6 +43,9 @@ Thumbs.db
 *.ot
 src/simulation/worlds/map_nav3d.world
 
+# 3D model resources (large binary files — download via ign fuel)
+src/simulation/models/
+
 # Claude Code
 .claude/
 
