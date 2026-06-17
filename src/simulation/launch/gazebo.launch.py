@@ -34,7 +34,7 @@ def generate_launch_description():
             description='Use simulation clock'
         ),
         DeclareLaunchArgument(
-            'x', default_value='0.0', description='Robot initial X position'
+            'x', default_value='-15.0', description='Robot initial X position'
         ),
         DeclareLaunchArgument(
             'y', default_value='-6.0', description='Robot initial Y position'

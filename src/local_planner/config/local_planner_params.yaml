@@ -8,7 +8,7 @@ localPlanner:
     sensorOffsetX: 0.0
     sensorOffsetY: 0.0
     vehicleLengthSlot: 0.05
-    vehicleWidthMargin: 0.1
+    vehicleWidthMargin: 0.05
     marginYawRateRatio: 0.0
     twoWayDrive: false
 
@@ -19,19 +19,19 @@ localPlanner:
     checkObstacle: true
     checkRotObstacle: false
     adjacentRange: 3.5
-    obstacleHeightThre: 0.15
+    obstacleHeightThre: 0.2
     groundHeightThre: 0.1
-    costHeightThre1: 0.15
+    costHeightThre1: 0.2
     costHeightThre2: 0.1
     useCost: false
 
     # Path scoring
     slowPathNumThre: 5
     slowGroupNumThre: 1
-    surPointThre: 2
-    pointPerPathThre: 2
-    minRelZ: -0.3
-    maxRelZ: 0.4
+    surPointThre: 6
+    pointPerPathThre: 6
+    minRelZ: 0.1
+    maxRelZ: 0.8
     maxSpeed: 1.0
     dirWeight: 0.02
     dirThre: 90.0
@@ -43,7 +43,7 @@ localPlanner:
     minPathRange: 1.0
     pathRangeStep: 0.5
     pathRangeBySpeed: true
-    pathCropByGoal: true
+    pathCropByGoal: false
 
     # Autonomy
     autonomyMode: false
@@ -63,7 +63,7 @@ localPlanner:
     waypoint_tolerance: 0.5
 
     # Corridor trust — trust known static geometry near global path (stairs)
-    corridor_trust_mode: true
+    corridor_trust_mode: false
     corridor_slope_threshold: 0.15
     corridor_xy_margin: 0.5
     corridor_z_margin: 0.3
