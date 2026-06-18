@@ -45,6 +45,11 @@ public:
     std::string map_file = get_parameter("pcd_file").as_string();
     if (!map_file.empty()) {
       load_map_auto(map_file);
+    } else if (get_parameter("online_update_enabled").as_bool()) {
+      double res = get_parameter("resolution").as_double();
+      octree_ = std::make_shared<octomap::OcTree>(res);
+      configure_planner();
+      RCLCPP_INFO(get_logger(), "Empty OctoMap created (res=%.3f). Online update will populate it.", res);
     } else {
       RCLCPP_INFO(get_logger(), "No pcd_file specified. Waiting for /pcd_file_cmd...");
     }
@@ -88,7 +93,7 @@ private:
 
     declare_parameter("online_update_enabled", false);
     declare_parameter("online_update_cloud_topic", "/lidar_points");
-    declare_parameter("online_update_period_s", 60.0);
+    declare_parameter("online_update_period_s", 5.0);
     declare_parameter("online_update_occupied_prob", 0.7);
     declare_parameter("online_update_conservative_mode", false);
     declare_parameter("online_update_conservative_offset_m", 0.1);

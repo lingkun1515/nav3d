@@ -31,10 +31,8 @@ def generate_launch_description():
     sim_share = get_package_share_directory('simulation')
     local_share = get_package_share_directory('local_planner')
     bringup_share = get_package_share_directory('bringup')
-    planner_share = get_package_share_directory('octo_planner')
 
-    local_params = os.path.join(local_share, 'config', 'local_planner_params.yaml')
-    planner_params = os.path.join(planner_share, 'config', 'planner_params.yaml')
+    nav_params = os.path.join(bringup_share, 'config', 'navigation.yaml')
     path_folder = os.path.join(local_share, 'paths')
     rviz_config = os.path.join(bringup_share, 'config', 'navigation.rviz')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -110,8 +108,8 @@ def generate_launch_description():
                 name='octo_planner_node',
                 output='screen',
                 parameters=[
-                    planner_params,
-                    {'pcd_file': pcd_file},
+                    nav_params,
+                    # {'pcd_file': pcd_file},
                     {'use_sim_time': use_sim_time},
                 ],
             ),
@@ -128,16 +126,9 @@ def generate_launch_description():
                 name='localPlanner',
                 output='screen',
                 parameters=[
-                    local_params,
+                    nav_params,
                     {'pathFolder': path_folder},
-                    {'autonomyMode': True},
-                    {'autonomySpeed': 0.5},
-                    {'maxSpeed': 0.5},
                     {'use_sim_time': use_sim_time},
-                    {'use_laser_scan': False},
-                    {'use_planned_path': True},
-                    {'global_frame_id': 'map'},
-                    {'corridor_trust_mode': True},
                 ],
                 remappings=[
                     ('/state_estimation', '/odom'),
@@ -150,10 +141,7 @@ def generate_launch_description():
                 name='pathFollower',
                 output='screen',
                 parameters=[
-                    local_params,
-                    {'autonomyMode': True},
-                    {'autonomySpeed': 0.5},
-                    {'maxSpeed': 0.5},
+                    nav_params,
                     {'use_sim_time': use_sim_time},
                 ],
                 remappings=[
