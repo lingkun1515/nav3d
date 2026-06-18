@@ -1,0 +1,150 @@
+<?xml version="1.0"?>
+
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- A1 RL Controller Plugin: handles 12-DOF locomotion + odom + joint_states + TF -->
+    <gazebo>
+        <plugin name="a1_rl_controller" filename="libA1RLController.so">
+            <robotNamespace>/</robotNamespace>
+
+            <!-- 12 joints (FR, FL, RR, RL × hip, thigh, calf) -->
+            <jointName>FR_hip_joint</jointName>
+            <jointName>FR_thigh_joint</jointName>
+            <jointName>FR_calf_joint</jointName>
+            <jointName>FL_hip_joint</jointName>
+            <jointName>FL_thigh_joint</jointName>
+            <jointName>FL_calf_joint</jointName>
+            <jointName>RR_hip_joint</jointName>
+            <jointName>RR_thigh_joint</jointName>
+            <jointName>RR_calf_joint</jointName>
+            <jointName>RL_hip_joint</jointName>
+            <jointName>RL_thigh_joint</jointName>
+            <jointName>RL_calf_joint</jointName>
+
+            <!-- ONNX model path -->
+            <modelPath>package://simulation/models/policy_act_inference_stair.onnx</modelPath>
+
+            <!-- ROS 2 topic names -->
+            <cmdVelTopic>/cmd_vel</cmdVelTopic>
+            <odomTopic>/odom</odomTopic>
+            <jointStateTopic>/joint_states</jointStateTopic>
+
+            <!-- TF frames -->
+            <odomFrameId>odom</odomFrameId>
+            <robotBaseFrame>base_footprint</robotBaseFrame>
+        </plugin>
+    </gazebo>
+
+    <!-- IMU on trunk -->
+    <gazebo reference="imu_link">
+        <sensor type="imu" name="trunk_imu">
+            <always_on>true</always_on>
+            <update_rate>1000</update_rate>
+            <visualize>false</visualize>
+            <imu>
+                <angular_velocity>
+                    <x>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.001</stddev>
+                        </noise>
+                    </x>
+                    <y>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.001</stddev>
+                        </noise>
+                    </y>
+                    <z>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.001</stddev>
+                        </noise>
+                    </z>
+                </angular_velocity>
+                <linear_acceleration>
+                    <x>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.01</stddev>
+                        </noise>
+                    </x>
+                    <y>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.01</stddev>
+                        </noise>
+                    </y>
+                    <z>
+                        <noise type="gaussian">
+                            <mean>0.0</mean>
+                            <stddev>0.01</stddev>
+                        </noise>
+                    </z>
+                </linear_acceleration>
+            </imu>
+            <plugin name="trunk_imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+                <ros>
+                    <remapping>~/out:=trunk_imu</remapping>
+                </ros>
+                <initial_orientation_as_reference>false</initial_orientation_as_reference>
+                <frame_name>imu_link</frame_name>
+            </plugin>
+        </sensor>
+    </gazebo>
+
+    <!-- 3D LiDAR (front-mounted, 10° downward pitch, same config as car) -->
+    <gazebo reference="lidar_link">
+        <sensor type="gpu_ray" name="lidar_3d">
+            <pose>0 0 0 0 0 0</pose>
+            <visualize>false</visualize>
+            <update_rate>10</update_rate>
+            <ray>
+                <scan>
+                    <horizontal>
+                        <samples>360</samples>
+                        <resolution>1</resolution>
+                        <min_angle>-3.14159</min_angle>
+                        <max_angle>3.14159</max_angle>
+                    </horizontal>
+                    <vertical>
+                        <samples>20</samples>
+                        <min_angle>-0.122173</min_angle>
+                        <max_angle>0.907571</max_angle>
+                    </vertical>
+                </scan>
+                <range>
+                    <min>0.15</min>
+                    <max>30.0</max>
+                    <resolution>0.01</resolution>
+                </range>
+            </ray>
+            <plugin name="lidar_3d_plugin" filename="libgazebo_ros_ray_sensor.so">
+                <ros>
+                    <remapping>~/out:=lidar_points</remapping>
+                </ros>
+                <output_type>sensor_msgs/PointCloud2</output_type>
+                <frame_name>lidar_link</frame_name>
+            </plugin>
+        </sensor>
+    </gazebo>
+
+    <!-- Foot friction (matches 3d-navi: mu1=0.6, mu2=0.6) -->
+    <gazebo reference="FR_foot">
+        <mu1>0.6</mu1>
+        <mu2>0.6</mu2>
+    </gazebo>
+    <gazebo reference="FL_foot">
+        <mu1>0.6</mu1>
+        <mu2>0.6</mu2>
+    </gazebo>
+    <gazebo reference="RR_foot">
+        <mu1>0.6</mu1>
+        <mu2>0.6</mu2>
+    </gazebo>
+    <gazebo reference="RL_foot">
+        <mu1>0.6</mu1>
+        <mu2>0.6</mu2>
+    </gazebo>
+
+</robot>

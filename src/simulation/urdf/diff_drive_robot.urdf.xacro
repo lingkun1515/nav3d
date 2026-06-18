@@ -213,6 +213,7 @@
       <odometry_frame>map</odometry_frame>
       <robot_base_frame>base_footprint</robot_base_frame>
       <odometry_source>1</odometry_source>
+      <cmd_vel_timeout>0.2</cmd_vel_timeout>
     </plugin>
   </gazebo>
 
