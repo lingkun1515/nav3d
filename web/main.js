@@ -958,12 +958,6 @@ function publishStartPoint(pt) {
 }
 
 function publishGoalPose(pt, yaw) {
-  if (goalTopic) {
-    goalTopic.publish(new ROSLIB.Message({
-      header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
-      point: { x: pt.x, y: pt.y, z: pt.z }
-    }));
-  }
   if (goalPoseTopic) {
     goalPoseTopic.publish(new ROSLIB.Message({
       header: { frame_id: 'map', stamp: { sec: 0, nanosec: 0 } },
