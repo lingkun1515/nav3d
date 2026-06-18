@@ -44,7 +44,7 @@ constexpr int GRID_VIXEL_NUM = GRID_VIXEL_NUM_X * GRID_VIXEL_NUM_Y;
 class LocalPlannerNode : public rclcpp::Node
 {
 public:
-  LocalPlannerNode() : Node("localPlanner")
+  LocalPlannerNode() : Node("latticePlanner")
   {
     declare_parameters();
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
@@ -607,6 +607,10 @@ private:
 
   void planned_path_callback(const nav_msgs::msg::Path::ConstSharedPtr path)
   {
+    // Reset all per-navigation state for new path
+    freezeStatus_ = 0;
+    freezeStartTime_ = 0;
+
     if (path->poses.empty()) {
       RCLCPP_WARN(get_logger(), "Received empty planned path — clearing waypoints");
       planned_waypoints_.clear();
@@ -874,14 +878,14 @@ private:
     for (const auto & pt : plannerCloudCrop_->points) {
       float x = pt.x;
       float y = pt.y;
-      float h = pt.intensity;
+      float h = pt.z;
 
       float margin = std::abs(marginYawRateRatio_ * x * vehicleYawRate_);
       float marginCW = 0, marginCCW = 0;
       if (vehicleYawRate_ < 0) marginCW = margin;
       else marginCCW = margin;
 
-      if (h > obstacleHeightThre_ || !useTerrainAnalysis_) {
+      if (h > obstacleHeightThre_) {
         if (x > -vehicleLength_ / 2.0 && x < -vehicleLengthSlot_ &&
             y > -vehicleWidth_ / 2.0 - vehicleWidthMargin_ - marginCCW &&
             y < -vehicleWidth_ / 2.0) brCount++;
@@ -926,6 +930,22 @@ private:
           break;
         }
         target_idx = static_cast<int>(i);
+      }
+      // Prevent oscillation: Euclidean lookahead can select a waypoint
+      // behind the robot when all waypoints are within lookahead distance
+      // (e.g. approaching final goal). A rear goal triggers backward-path
+      // forcing (preSelectedGroupID) which causes in-place spinning.
+      double wp_rel_x = (std::get<0>(planned_waypoints_[target_idx]) - vehicleX_) * cosYaw
+                      + (std::get<1>(planned_waypoints_[target_idx]) - vehicleY_) * sinYaw;
+      if (wp_rel_x < 0 && target_idx > static_cast<int>(current_wp_idx_)) {
+        for (int i = target_idx - 1; i >= static_cast<int>(current_wp_idx_); i--) {
+          double rx = (std::get<0>(planned_waypoints_[i]) - vehicleX_) * cosYaw
+                    + (std::get<1>(planned_waypoints_[i]) - vehicleY_) * sinYaw;
+          if (rx >= 0) {
+            target_idx = i;
+            break;
+          }
+        }
       }
       goalX_ = std::get<0>(planned_waypoints_[target_idx]);
       goalY_ = std::get<1>(planned_waypoints_[target_idx]);
@@ -1043,7 +1063,7 @@ private:
       for (int i = 0; i < plannerCloudCropSize; i++) {
         float x = plannerCloudCrop_->points[i].x / pathScale_;
         float y = plannerCloudCrop_->points[i].y / pathScale_;
-        float h = plannerCloudCrop_->points[i].intensity;
+        float h = plannerCloudCrop_->points[i].z;
         float dis = std::sqrt(x * x + y * y);
 
         if (dis < pathRange / pathScale_ &&
@@ -1073,7 +1093,7 @@ private:
               int ind = GRID_VIXEL_NUM_Y * indX + indY;
               int blockedNum = correspondences_[ind].size();
               for (int j = 0; j < blockedNum; j++) {
-                if (h > obstacleHeightThre_ || !useTerrainAnalysis_) {
+                if (h > obstacleHeightThre_) {
                   clearPathList_[PATH_NUM * rotDir + correspondences_[ind][j]]++;
                 } else {
                   if (pathPenaltyList_[PATH_NUM * rotDir + correspondences_[ind][j]] < h &&

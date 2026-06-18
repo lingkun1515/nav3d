@@ -31,9 +31,9 @@ else()
   message(STATUS "serial not found — motor controller via ROS topic only")
 endif()
 
-# --- localPlanner executable ---
-add_executable(localPlanner src/local_planner_node.cpp)
-ament_target_dependencies(localPlanner
+# --- latticePlanner executable ---
+add_executable(latticePlanner src/local_planner_node.cpp)
+ament_target_dependencies(latticePlanner
   rclcpp
   std_msgs
   sensor_msgs
@@ -47,7 +47,7 @@ ament_target_dependencies(localPlanner
   pcl_ros
   pcl_conversions
 )
-target_include_directories(localPlanner PRIVATE ${PCL_INCLUDE_DIRS})
+target_include_directories(latticePlanner PRIVATE ${PCL_INCLUDE_DIRS})
 
 # --- pathFollower executable ---
 add_executable(pathFollower src/path_follower_node.cpp)
@@ -67,7 +67,7 @@ if(serial_FOUND)
 endif()
 
 install(TARGETS
-  localPlanner
+  latticePlanner
   pathFollower
   DESTINATION lib/${PROJECT_NAME})
 

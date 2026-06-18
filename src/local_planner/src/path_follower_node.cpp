@@ -85,6 +85,7 @@ private:
     declare_parameter("autonomySpeed", 1.0);
     declare_parameter("joyToSpeedDelay", 2.0);
     declare_parameter("corridor_tilt_threshold", 60.0);
+    declare_parameter("cmdVelTimeout", 0.2);
   }
 
   void setup_pub_sub()
@@ -127,6 +128,10 @@ private:
       "/near_corridor", qos,
       [this](std_msgs::msg::Bool::ConstSharedPtr msg) { near_corridor_ = msg->data; });
 
+
+    sub_web_cmd_vel_ = create_subscription<geometry_msgs::msg::Twist>(
+      "/web_cmd_vel", qos,
+      [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) { web_cmd_vel_callback(msg); });
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", qos);
   }
 
@@ -166,6 +171,7 @@ private:
     autonomy_speed_ = get_parameter("autonomySpeed").as_double();
     joy_to_speed_delay_ = get_parameter("joyToSpeedDelay").as_double();
     corridor_tilt_threshold_ = get_parameter("corridor_tilt_threshold").as_double();
+    cmd_vel_timeout_ = get_parameter("cmdVelTimeout").as_double();
 
     if (autonomy_mode_) {
       joy_speed_ = autonomy_speed_ / max_speed_;
@@ -224,6 +230,7 @@ private:
 
     path_point_id_ = 0;
     path_init_ = true;
+    last_path_time_ = now().seconds();
   }
 
   void joystick_callback(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
@@ -373,7 +380,7 @@ private:
       joySpeed3 *= slow_rate3_;
 
     if ((std::abs(dirDiff) < dir_diff_thre_ ||
-         (dis < omni_dir_goal_thre_ && std::abs(dirDiff) < omni_dir_diff_thre_)) && dis > stop_dis_thre_) {
+         (endDis < omni_dir_goal_thre_ && std::abs(dirDiff) < omni_dir_diff_thre_)) && dis > stop_dis_thre_) {
       if (vehicle_speed_ < joySpeed3) vehicle_speed_ += max_accel_ / 100.0;
       else if (vehicle_speed_ > joySpeed3) vehicle_speed_ -= max_accel_ / 100.0;
     } else {
@@ -388,6 +395,15 @@ private:
 
     if (safety_stop_ >= 1) vehicle_speed_ = 0;
     if (safety_stop_ >= 2) vehicleYawRate = 0;
+
+    if (!manual_mode_ && path_init_) {
+      double now_sec = now().seconds();
+      if (now_sec - odom_time_ > cmd_vel_timeout_ ||
+          now_sec - last_path_time_ > cmd_vel_timeout_) {
+        vehicle_speed_ = 0;
+        vehicleYawRate = 0;
+      }
+    }
 
     pub_skip_count_--;
     if (pub_skip_count_ < 0) {
@@ -503,9 +519,11 @@ private:
   double autonomy_speed_{1.0};
   double joy_to_speed_delay_{2.0};
   double corridor_tilt_threshold_{60.0};
+  double cmd_vel_timeout_{0.2};
 
   // ---- state ----
   float joy_speed_{0}, joy_speed_raw_{0}, joy_yaw_{0};
+  double last_path_time_{0};
   bool near_corridor_{false};
   float joy_manual_fwd_{0}, joy_manual_left_{0}, joy_manual_yaw_{0};
   bool manual_mode_{false};

@@ -12,8 +12,8 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='local_planner',
-            executable='localPlanner',
-            name='localPlanner',
+            executable='latticePlanner',
+            name='latticePlanner',
             output='screen',
             parameters=[
                 default_params,
