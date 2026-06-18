@@ -51,6 +51,9 @@ octo_planner_node:
     auto_publish_enabled: false
     octomap_publish_period_s: 5.0
 
+    # Timer-driven periodic global re-planning (seconds, 0 = disabled)
+    replan_period_s: 1.5
+
     # Auto-save: cache converted octomap as .bt alongside source file
     auto_save_bt: true
     # XY window for world/sdf loading (0 = no cropping)
@@ -61,19 +64,19 @@ octo_planner_node:
     occupied_cloud_radius: 10.0
 
     # Online incremental OctoMap update from real-time point cloud
-    online_update_enabled: true
+    online_update_enabled: false
     online_update_cloud_topic: "/lidar_points"
     online_update_period_s: 10.0
     online_update_occupied_prob: 0.7
     # Conservative mode: instead of updating the voxel at the hit point,
     # update the voxel behind along the sensor ray (inflates obstacles)
     online_update_use_raycasting: true
-    online_update_conservative_mode: true
+    online_update_conservative_mode: false
     online_update_conservative_offset_m: 0.1
     online_update_min_interval_ms: 500
     online_update_downsample_step: 1
 
-localPlanner:
+latticePlanner:
   ros__parameters:
     # pathFolder is set by launch (dynamic, based on install share dir)
 
@@ -102,7 +105,7 @@ localPlanner:
     slowPathNumThre: 5
     slowGroupNumThre: 1
     surPointThre: 6
-    pointPerPathThre: 12
+    pointPerPathThre: 18
     minRelZ: 0.1
     maxRelZ: 0.8
     maxSpeed: 0.5
@@ -137,7 +140,7 @@ localPlanner:
     waypoint_tolerance: 0.5
 
     # Corridor trust — trust known static geometry near global path (stairs)
-    corridor_trust_mode: true
+    corridor_trust_mode: false
     corridor_slope_threshold: 0.15
     corridor_xy_margin: 0.5
     corridor_z_margin: 0.3
@@ -185,6 +188,7 @@ pathFollower:
     noRotAtStop: false
     noRotAtGoal: true
     corridor_tilt_threshold: 60.0
+    cmdVelTimeout: 0.2
 
     # Autonomy
     autonomyMode: true

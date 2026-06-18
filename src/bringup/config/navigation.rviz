@@ -1,14 +1,18 @@
 Panels:
   - Class: rviz_common/Displays
-    Help Height: 70
+    Help Height: 0
     Name: Displays
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /TF1/Frames1
+        - /Status1
+        - /LatticePlanner1
+        - /LatticePlanner1/LocalPath1/Topic1
+        - /LatticePlanner1/FreePaths1/Topic1
+        - /Nav2CostmapPlanner1/LocalPath1
         - /OctoMap1
       Splitter Ratio: 0.5
-    Tree Height: 322
+    Tree Height: 591
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -22,23 +26,59 @@ Visualization Manager:
       Frame Timeout: 3
       Frames:
         All Enabled: false
+        FL_calf:
+          Value: false
+        FL_foot:
+          Value: false
+        FL_hip:
+          Value: false
+        FL_thigh_shoulder:
+          Value: false
+        FR_calf:
+          Value: false
+        FR_foot:
+          Value: false
+        FR_hip:
+          Value: false
+        FR_thigh_shoulder:
+          Value: false
+        RL_calf:
+          Value: false
+        RL_foot:
+          Value: false
+        RL_hip:
+          Value: false
+        RL_thigh_shoulder:
+          Value: false
+        RR_calf:
+          Value: false
+        RR_foot:
+          Value: false
+        RR_hip:
+          Value: false
+        RR_thigh_shoulder:
+          Value: false
         base_footprint:
           Value: false
         base_link:
-          Value: true
+          Value: false
         front_caster:
           Value: false
         front_marker:
+          Value: false
+        imu_link:
           Value: false
         left_wheel:
           Value: false
         lidar_link:
           Value: false
         map:
-          Value: true
+          Value: false
         rear_caster:
           Value: false
         right_wheel:
+          Value: false
+        trunk:
           Value: false
       Marker Scale: 2
       Name: TF
@@ -61,6 +101,9 @@ Visualization Manager:
                 {}
               right_wheel:
                 {}
+              trunk:
+                imu_link:
+                  {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -70,7 +113,7 @@ Visualization Manager:
       Description Source: Topic
       Description Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /robot_description
@@ -164,7 +207,7 @@ Visualization Manager:
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
+        Reliability Policy: Best Effort
         Value: /odom
       Value: true
     - Alpha: 0.800000011920929
@@ -260,7 +303,60 @@ Visualization Manager:
           Use rainbow: false
           Value: true
       Enabled: true
-      Name: LocalPlanner
+      Name: LatticePlanner
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 0.8999999761581421
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 0; 230; 118
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Lines
+          Line Width: 0.05000000074505806
+          Name: LocalPath
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.07999999821186066
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /path
+          Value: true
+        - Alpha: 0.699999988079071
+          Class: rviz_default_plugins/Map
+          Color Scheme: map
+          Draw Behind: false
+          Enabled: true
+          Name: Costmap
+          Topic:
+            Depth: 5
+            Durability Policy: Transient Local
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /costmap
+          Update Topic:
+            Depth: 5
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /costmap_updates
+          Use Timestamp: false
+          Value: true
+      Enabled: false
+      Name: Nav2CostmapPlanner
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -348,7 +444,7 @@ Visualization Manager:
           Color: 255; 255; 255
           Color Transformer: Intensity
           Decay Time: 0
-          Enabled: false
+          Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
           Max Intensity: 0.75
@@ -369,7 +465,7 @@ Visualization Manager:
             Value: /risk_cost_cells
           Use Fixed Frame: true
           Use rainbow: true
-          Value: false
+          Value: true
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
@@ -396,7 +492,7 @@ Visualization Manager:
           Style: Flat Squares
           Topic:
             Depth: 5
-            Durability Policy: Volatile
+            Durability Policy: Transient Local
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
@@ -427,7 +523,7 @@ Visualization Manager:
     - Class: rviz_default_plugins/SetGoal
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: goal_pose
@@ -437,7 +533,7 @@ Visualization Manager:
       Covariance yaw: 0.06853891909122467
       Topic:
         Depth: 5
-        Durability Policy: Volatile
+        Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: initialpose
@@ -448,25 +544,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 16.311986923217773
+      Distance: 24.512075424194336
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -13.773937225341797
-        Y: -2.510608673095703
-        Z: -0.1338897943496704
+        X: -10.085638999938965
+        Y: -2.327501058578491
+        Z: -8.302860260009766
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.3397968113422394
+      Pitch: 1.0747967958450317
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 5.691341400146484
+      Yaw: 5.666325092315674
     Saved: ~
 Window Geometry:
   Displays:
@@ -474,7 +570,7 @@ Window Geometry:
   Height: 742
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001560000028cfc0200000002fb000000100044006900730070006c006100790073010000003d000001c5000000c900fffffffb0000000a005600690065007700730100000208000000c1000000a400ffffff000003aa0000028c00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001560000028cfc0200000002fb000000100044006900730070006c006100790073010000003d0000028c000000c900fffffffb0000000a005600690065007700730000000208000000c1000000a400ffffff000003aa0000028c00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
   Width: 1286

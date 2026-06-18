@@ -1,26 +1,17 @@
 """
-Dog3DNav 完整导航栈启动文件
+Dog3DNav 导航栈启动文件
 
 End-to-end flow:
-  Web UI  /goal_pose  octo_planner  /planned_path  localPlanner (waypoint + TF)
-          pathFollower  /cmd_vel (Twist)  Gazebo robot
+  Web UI  /goal_pose  octo_planner  /planned_path  localPlanner  /path  pathFollower  /cmd_vel
 
 用法:
   ros2 launch bringup navigation.launch.py
-  ros2 launch bringup navigation.launch.py pcd_file:=/path/to/map.pcd
   ros2 launch bringup navigation.launch.py launch_rviz:=false
-
-Gazebo 场景需离线生成（两种方式）：
-  # 方式1: PCD → world
-  python3 src/simulation/scripts/pcd_to_world.py <map.pcd> <output.world>
-  # 方式2: BT → world
-  python3 src/simulation/scripts/bt_to_world.py <map.bt> <output.world>
+  ros2 launch bringup navigation.launch.py launch_rosbridge:=false
 """
 import os
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            TimerAction)
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -28,7 +19,6 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    sim_share = get_package_share_directory('simulation')
     local_share = get_package_share_directory('local_planner')
     bringup_share = get_package_share_directory('bringup')
 
@@ -38,6 +28,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     pcd_file = LaunchConfiguration('pcd_file')
     launch_rviz = LaunchConfiguration('launch_rviz')
+    launch_rosbridge = LaunchConfiguration('launch_rosbridge')
 
     # Maps bundled with bringup package
     maps_dir = os.path.join(bringup_share, 'maps')
@@ -48,25 +39,8 @@ def generate_launch_description():
     if default_map:
         default_map = os.path.realpath(default_map)  # resolve install symlink → src/
 
-    empty_world = os.path.join(sim_share, 'worlds', 'empty.world')
-    nav3d_world = os.path.join(sim_share, 'worlds', 'map_nav3d.world')
-    path_world = nav3d_world if os.path.exists(nav3d_world) else empty_world
-    gazebo_launch_file = os.path.join(sim_share, 'launch', 'gazebo.launch.py')
-
-    x_arg = LaunchConfiguration('x')
-    y_arg = LaunchConfiguration('y')
-    z_arg = LaunchConfiguration('z')
-    yaw_arg = LaunchConfiguration('yaw')
-    launch_sim = LaunchConfiguration('launch_sim')
-    robot_model_arg = LaunchConfiguration('robot_model')
-
     ld = LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
-        DeclareLaunchArgument(
-            'world',
-            default_value=path_world,
-            description='Gazebo world file (generate offline: pcd_to_world.py / bt_to_world.py)',
-        ),
         DeclareLaunchArgument(
             'pcd_file', default_value=default_map,
             description='Map file (.bt/.pcd/.ot/.world/.sdf), default bringup/maps/map_nav3d.bt',
@@ -75,34 +49,11 @@ def generate_launch_description():
             'launch_rviz', default_value='true',
             description='Launch RViz2 with the navigation config',
         ),
-        DeclareLaunchArgument(
-            'launch_sim', default_value='false',
-            description='Launch Gazebo simulation (set false for real robot)',
-        ),
-        DeclareLaunchArgument('robot_model', default_value='car',
-                              description='Robot model: car or a1'),
-        DeclareLaunchArgument('x', default_value='0.0', description='Robot initial X (m)'),
-        DeclareLaunchArgument('y', default_value='-6.0', description='Robot initial Y (m)'),
-        DeclareLaunchArgument('z', default_value='0.1', description='Robot initial Z (m)'),
-        DeclareLaunchArgument('yaw', default_value='0.0', description='Robot initial yaw (rad)'),
+        DeclareLaunchArgument('launch_rosbridge', default_value='false',
+                              description='Launch rosbridge WebSocket for Web UI'),
     ])
 
-    # 1. Gazebo + robot (optional, controlled by launch_sim)
-    ld.add_action(IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(gazebo_launch_file),
-        launch_arguments={
-            'world': path_world,
-            'use_sim_time': use_sim_time,
-            'robot_model': robot_model_arg,
-            'x': x_arg,
-            'y': y_arg,
-            'z': z_arg,
-            'yaw': yaw_arg,
-        }.items(),
-        condition=IfCondition(launch_sim),
-    ))
-
-    # 2. octo_planner
+    # 1. octo_planner
     ld.add_action(TimerAction(
         period=2.0,
         actions=[
@@ -113,21 +64,21 @@ def generate_launch_description():
                 output='screen',
                 parameters=[
                     nav_params,
-                    # {'pcd_file': pcd_file},
+                    {'pcd_file': pcd_file},
                     {'use_sim_time': use_sim_time},
                 ],
             ),
         ]
     ))
 
-    # 3. localPlanner + pathFollower
+    # 2. Local planner (selectable via planner:=) + pathFollower
     ld.add_action(TimerAction(
         period=3.5,
         actions=[
             Node(
                 package='local_planner',
-                executable='localPlanner',
-                name='localPlanner',
+                executable='latticePlanner',
+                name='latticePlanner',
                 output='screen',
                 parameters=[
                     nav_params,
@@ -155,16 +106,17 @@ def generate_launch_description():
         ]
     ))
 
-    # 4. ROSBridge for Web UI
+    # 3. ROSBridge for Web UI
     ld.add_action(Node(
         package='rosbridge_server',
         executable='rosbridge_websocket',
         name='rosbridge_websocket',
         parameters=[{'use_sim_time': use_sim_time}],
         output='screen',
+        condition=IfCondition(launch_rosbridge),
     ))
 
-    # 5. RViz2 (optional, controlled by launch_rviz)
+    # 4. RViz2 (optional, controlled by launch_rviz)
     ld.add_action(Node(
         package='rviz2',
         executable='rviz2',
