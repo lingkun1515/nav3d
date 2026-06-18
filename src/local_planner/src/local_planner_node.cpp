@@ -156,9 +156,6 @@ private:
         "/planned_path", qos,
         [this](nav_msgs::msg::Path::ConstSharedPtr msg) { planned_path_callback(msg); });
 
-      sub_start_nav_ = create_subscription<std_msgs::msg::Bool>(
-        "/start_navigation", qos,
-        [this](std_msgs::msg::Bool::ConstSharedPtr msg) { start_navigation_callback(msg); });
     } else {
       sub_goal_ = create_subscription<geometry_msgs::msg::PointStamped>(
         "/way_point", qos,
@@ -611,7 +608,11 @@ private:
   void planned_path_callback(const nav_msgs::msg::Path::ConstSharedPtr path)
   {
     if (path->poses.empty()) {
-      RCLCPP_WARN(get_logger(), "Received empty planned path");
+      RCLCPP_WARN(get_logger(), "Received empty planned path — clearing waypoints");
+      planned_waypoints_.clear();
+      current_wp_idx_ = 0;
+      navigating_ = false;
+      has_goal_ = false;
       return;
     }
     planned_waypoints_.clear();
@@ -629,14 +630,6 @@ private:
     RCLCPP_INFO(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
   }
 
-  void start_navigation_callback(const std_msgs::msg::Bool::ConstSharedPtr msg)
-  {
-    if (msg->data && !planned_waypoints_.empty()) {
-      navigating_ = true;
-      current_wp_idx_ = 0;
-      RCLCPP_INFO(get_logger(), "Navigation started");
-    }
-  }
 
   void speed_callback(const std_msgs::msg::Float32::ConstSharedPtr speed)
   {
@@ -1388,7 +1381,6 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_joystick_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_goal_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_planned_path_;
-  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_start_nav_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_speed_;
   rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr sub_boundary_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_added_obstacles_;

@@ -86,7 +86,7 @@ localPlanner:
     twoWayDrive: false
 
     # Perception
-    laserVoxelSize: 0.05
+    laserVoxelSize: 0.1
     terrainVoxelSize: 0.2
     useTerrainAnalysis: false
     checkObstacle: true
@@ -102,7 +102,7 @@ localPlanner:
     slowPathNumThre: 5
     slowGroupNumThre: 1
     surPointThre: 6
-    pointPerPathThre: 6
+    pointPerPathThre: 12
     minRelZ: 0.1
     maxRelZ: 0.8
     maxSpeed: 0.5

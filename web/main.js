@@ -10,8 +10,6 @@ const pickStatus = document.getElementById('pick-status');
 const robotStatus = document.getElementById('robot-status');
 const velDisplay = document.getElementById('vel-display');
 const wsUrlInput = document.getElementById('ws-url');
-const navModal = document.getElementById('nav-confirm-modal');
-const navConfirmMsg = document.getElementById('nav-confirm-msg');
 const logList = document.getElementById('log-list');
 const logCount = document.getElementById('log-count');
 
@@ -85,7 +83,7 @@ let traversablePickMesh = null;
 let occupiedPickMesh = null;
 
 // Placement mode
-let placementMode = null; // 'start' | 'goal' | 'navigate' | null
+let placementMode = null; // 'start' | 'goal' | null
 let dragStart = null;
 let dragPlaneZ = 0;
 let pointerCaptured = false;
@@ -105,7 +103,6 @@ let startTopic = null;
 let startPoseTopic = null;
 let goalTopic = null;
 let goalPoseTopic = null;
-let startNavTopic = null;
 let stopNavTopic = null;
 let cmdVelTopic = null;
 let addVoxelsTopic = null;
@@ -598,12 +595,6 @@ function setPlannedPath(msg) {
   });
   pathGroup.add(new THREE.Mesh(tubeGeo, tubeMat));
 
-  // Show navigation confirm if in navigate mode
-  if (placementMode === 'navigate') {
-    navConfirmMsg.textContent = `路径包含 ${msg.poses.length} 个航点。是否开始导航？`;
-    navModal.hidden = false;
-  }
-
   pickStatus.textContent = `路径: ${msg.poses.length} 点`;
   log(`规划路径: ${msg.poses.length} 个航点, 长度 ${(pts.length > 1 ? curve.getLength().toFixed(1) : '0')} m`, 'ok');
 }
@@ -856,7 +847,7 @@ function onCanvasPointerUp(event) {
     pickStatus.textContent = `起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}) yaw=${yawDeg}°`;
     setMarker('start', origin, 0x66bb6a, yaw);
     log(`设置起点: (${origin.x.toFixed(2)}, ${origin.y.toFixed(2)}, ${origin.z.toFixed(2)}) 航向=${yawDeg}°`, 'info');
-  } else if (placementMode === 'goal' || placementMode === 'navigate') {
+  } else if (placementMode === 'goal') {
     goalPoint = { x: origin.x, y: origin.y, z: origin.z };
     hasGoal = true;
     // Auto-publish start from robot pose if not manually set
@@ -981,18 +972,6 @@ function publishGoalPose(pt, yaw) {
         orientation: { x: 0, y: 0, z: Math.sin(yaw / 2), w: Math.cos(yaw / 2) }
       }
     }));
-  }
-}
-
-function publishNavigation(go) {
-  if (!startNavTopic) return;
-  startNavTopic.publish(new ROSLIB.Message({ data: go }));
-  if (go) {
-    const sp = startPoint || { x: '?', y: '?', z: '?' };
-    const gp = goalPoint || { x: '?', y: '?', z: '?' };
-    log(`开始导航: (${typeof sp.x === 'number' ? sp.x.toFixed(2) : sp.x}, ${typeof sp.y === 'number' ? sp.y.toFixed(2) : sp.y}) → (${typeof gp.x === 'number' ? gp.x.toFixed(2) : gp.x}, ${typeof gp.y === 'number' ? gp.y.toFixed(2) : gp.y})`, 'ok');
-  } else {
-    log('仅显示路线，未执行导航', 'info');
   }
 }
 
@@ -1146,7 +1125,6 @@ function setupTopics() {
   startPoseTopic = new ROSLIB.Topic({ ros, name: '/start_pose', messageType: 'geometry_msgs/PoseStamped' });
   goalTopic = new ROSLIB.Topic({ ros, name: '/goal_point', messageType: 'geometry_msgs/PointStamped' });
   goalPoseTopic = new ROSLIB.Topic({ ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
-  startNavTopic = new ROSLIB.Topic({ ros, name: '/start_navigation', messageType: 'std_msgs/Bool' });
   stopNavTopic = new ROSLIB.Topic({ ros, name: '/stop_navigation', messageType: 'std_msgs/Bool' });
   cmdVelTopic = new ROSLIB.Topic({ ros, name: '/web_cmd_vel', messageType: 'geometry_msgs/Twist' });
   addVoxelsTopic = new ROSLIB.Topic({ ros, name: '/add_occupied_voxels', messageType: 'sensor_msgs/PointCloud2' });
@@ -1255,13 +1233,18 @@ function setActivePlacementBtn(mode) {
   placementMode = mode;
   document.getElementById('set-start-btn').classList.toggle('active', mode === 'start');
   document.getElementById('set-goal-btn').classList.toggle('active', mode === 'goal');
-  document.getElementById('navigate-btn').classList.toggle('active', mode === 'navigate');
   pickStatus.textContent = mode ? `点击地图设置${mode === 'start' ? '起点' : '终点'}` : '-';
 }
 
 document.getElementById('set-start-btn').addEventListener('click', () => setActivePlacementBtn(placementMode === 'start' ? null : 'start'));
 document.getElementById('set-goal-btn').addEventListener('click', () => setActivePlacementBtn(placementMode === 'goal' ? null : 'goal'));
-document.getElementById('navigate-btn').addEventListener('click', () => setActivePlacementBtn(placementMode === 'navigate' ? null : 'navigate'));
+
+// 开始/恢复导航 → 解除 pathFollower 急停
+document.getElementById('navigate-btn').addEventListener('click', () => {
+  if (stopNavTopic) stopNavTopic.publish(new ROSLIB.Message({ data: false }));
+  pickStatus.textContent = '导航执行中...';
+  log('导航已启动/恢复', 'ok');
+});
 
 document.getElementById('stop-nav-btn').addEventListener('click', () => {
   publishStopNavigation();
@@ -1280,18 +1263,6 @@ document.getElementById('connect-btn').addEventListener('click', () => {
   connectRos();
 });
 document.getElementById('fetch-map-btn').addEventListener('click', () => requestMap());
-
-// Navigation modal
-document.getElementById('nav-confirm-go').addEventListener('click', () => {
-  navModal.hidden = true;
-  publishNavigation(true);
-  pickStatus.textContent = '导航执行中...';
-});
-document.getElementById('nav-confirm-cancel').addEventListener('click', () => {
-  navModal.hidden = true;
-  publishNavigation(false);
-  pickStatus.textContent = '仅显示路线';
-});
 
 // Canvas interaction
 canvas.addEventListener('pointerdown', onCanvasPointerDown);

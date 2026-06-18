@@ -266,9 +266,7 @@ private:
 
   void stop_navigation_callback(const std_msgs::msg::Bool::ConstSharedPtr msg)
   {
-    if (msg->data) {
-      safety_stop_ = 1;
-    }
+    safety_stop_ = msg->data ? 1 : 0;
   }
 
   void slow_down_callback(const std_msgs::msg::Int8::ConstSharedPtr slow)

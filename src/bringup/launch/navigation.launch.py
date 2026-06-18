@@ -58,6 +58,7 @@ def generate_launch_description():
     z_arg = LaunchConfiguration('z')
     yaw_arg = LaunchConfiguration('yaw')
     launch_sim = LaunchConfiguration('launch_sim')
+    robot_model_arg = LaunchConfiguration('robot_model')
 
     ld = LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
@@ -78,6 +79,8 @@ def generate_launch_description():
             'launch_sim', default_value='false',
             description='Launch Gazebo simulation (set false for real robot)',
         ),
+        DeclareLaunchArgument('robot_model', default_value='car',
+                              description='Robot model: car or a1'),
         DeclareLaunchArgument('x', default_value='0.0', description='Robot initial X (m)'),
         DeclareLaunchArgument('y', default_value='-6.0', description='Robot initial Y (m)'),
         DeclareLaunchArgument('z', default_value='0.1', description='Robot initial Z (m)'),
@@ -90,6 +93,7 @@ def generate_launch_description():
         launch_arguments={
             'world': path_world,
             'use_sim_time': use_sim_time,
+            'robot_model': robot_model_arg,
             'x': x_arg,
             'y': y_arg,
             'z': z_arg,
