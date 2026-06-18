@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <atomic>
 #include <queue>
 
 #include "octomap/OcTree.h"
@@ -112,6 +113,8 @@ public:
   void configure(const PlannerConfig& config);
 
   void reanalyze();
+
+  void setCancelFlag(std::atomic<bool>* flag) { cancel_flag_ = flag; }
 
   void makePlan(const PointPose start,const PointPose goal);
 
@@ -249,6 +252,7 @@ private:
   bool has_goal_ = false;
   bool has_goal_pose_ = false;
   bool planning_in_progress_ = false;
+  std::atomic<bool>* cancel_flag_ = nullptr;
 
   std::uint64_t plan_seq_ = 0;
   std::uint64_t last_success_seq_ = 0;

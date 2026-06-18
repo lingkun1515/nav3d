@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <filesystem>
 #include <sys/stat.h>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
@@ -55,6 +58,16 @@ public:
     }
   }
 
+  ~OctoPlannerNode()
+  {
+    shutdown_ = true;
+    cancel_planning_ = true;
+    planning_cv_.notify_one();
+    if (worker_thread_.joinable()) {
+      worker_thread_.join();
+    }
+  }
+
 private:
   void declare_parameters()
   {
@@ -100,6 +113,8 @@ private:
     declare_parameter("online_update_use_raycasting", false);
     declare_parameter("online_update_min_interval_ms", 500);
     declare_parameter("online_update_downsample_step", 1);
+
+    declare_parameter("replan_period_s", 0.0);
   }
 
   void setup_pub_sub()
@@ -177,6 +192,23 @@ private:
       republish_timer_ = create_wall_timer(
         std::chrono::duration<double>(period),
         [this]() { republish_all(); });
+    }
+
+    // Launch persistent planning worker (never blocks spin thread)
+    worker_thread_ = std::thread(&OctoPlannerNode::planning_worker_loop, this);
+
+    // Timer-driven periodic re-planning (0 = disabled)
+    replan_period_ = get_parameter("replan_period_s").as_double();
+    if (replan_period_ > 0.0) {
+      replan_timer_ = create_wall_timer(
+        std::chrono::duration<double>(replan_period_),
+        [this]() {
+          if (map_ready_ && has_goal_) {
+            RCLCPP_INFO(get_logger(), "Timer re-plan (period=%.1fs)", replan_period_);
+            start_planning();
+          }
+        });
+      RCLCPP_INFO(get_logger(), "Periodic re-plan enabled: %.1fs", replan_period_);
     }
 
     // TF for online update (always created — lightweight)
@@ -422,6 +454,14 @@ private:
 
   void configure_planner()
   {
+    // Cancel any running planning, then wait for worker to release the planner
+    cancel_planning_ = true;
+    {
+      std::lock_guard<std::mutex> lock(planning_mutex_);
+      // Worker releases mutex when A* exits (cancel flag checked every iteration)
+    }
+    cancel_planning_ = false;
+
     if (!octree_) return;
 
     RCLCPP_INFO(get_logger(), "OctoMap ready. Resolution=%.3f, leaves=%zu",
@@ -491,7 +531,7 @@ private:
     has_goal_ = true;
     RCLCPP_INFO(get_logger(), "Goal set: (%.2f, %.2f, %.2f)",
                 goal_point_.x, goal_point_.y, goal_point_.z);
-    try_plan();
+    start_planning();
   }
 
   void on_goal_pose(geometry_msgs::msg::PoseStamped::SharedPtr msg)
@@ -502,71 +542,128 @@ private:
     has_goal_ = true;
     RCLCPP_INFO(get_logger(), "GoalPose set: (%.2f, %.2f, %.2f)",
                 goal_point_.x, goal_point_.y, goal_point_.z);
-    try_plan();
+    start_planning();
   }
 
-  void try_plan()
+  void clear_planned_path()
   {
-    // Resolve start point: explicit /start_point takes priority, fallback to odometry
-    global_planner::PointPose start;
-    if (has_explicit_start_) {
-      start = start_point_;
-    } else if (has_odom_) {
-      const auto & p = latest_odom_.pose.pose.position;
-      start = {p.x, p.y, p.z};
-    } else {
-      RCLCPP_WARN(get_logger(), "Start not set (no /start_point, no /odom).");
-      return;
-    }
+    nav_msgs::msg::Path empty;
+    empty.header.stamp = now();
+    empty.header.frame_id = get_parameter("frame_id").as_string();
+    path_pub_->publish(empty);
+  }
 
+  void start_planning()
+  {
     if (!map_ready_) {
       RCLCPP_WARN(get_logger(), "Map not ready.");
       return;
     }
+
     if (!has_goal_) {
       RCLCPP_WARN(get_logger(), "Goal not set.");
       return;
     }
 
-    RCLCPP_INFO(get_logger(), "Planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)%s",
-                start.x, start.y, start.z,
-                goal_point_.x, goal_point_.y, goal_point_.z,
-                has_explicit_start_ ? "" : " [from odom]");
+    // Cancel any ongoing A* search (checked every iteration, exits in microseconds)
+    cancel_planning_ = true;
 
-    auto t0 = now();
-    planner_->makePlan(start, goal_point_);
+    // Signal "re-planning" immediately — spin thread returns here in microseconds
+    clear_planned_path();
 
-    std::vector<global_planner::PointPose> results;
-    planner_->getPlannerResults(results);
-    auto dt = (now() - t0).seconds();
-
-    if (results.empty()) {
-      RCLCPP_WARN(get_logger(), "Planning failed. No path found. (%.3fs)", dt);
-      nav_msgs::msg::Path empty_path;
-      empty_path.header.stamp = now();
-      empty_path.header.frame_id = get_parameter("frame_id").as_string();
-      path_pub_->publish(empty_path);
-      return;
+    // Wake up the persistent worker to start fresh planning
+    {
+      std::lock_guard<std::mutex> lock(planning_cv_mutex_);
+      pending_goal_ = true;
     }
+    planning_cv_.notify_one();
 
-    RCLCPP_INFO(get_logger(), "Path found: %zu waypoints in %.3fs", results.size(), dt);
+    RCLCPP_INFO(get_logger(), "Planning request dispatched (non-blocking).");
+  }
 
-    nav_msgs::msg::Path path_msg;
-    path_msg.header.stamp = now();
-    path_msg.header.frame_id = get_parameter("frame_id").as_string();
-    path_msg.poses.reserve(results.size());
+  void planning_worker_loop()
+  {
+    while (true) {
+      // Wait for a planning request
+      {
+        std::unique_lock<std::mutex> lock(planning_cv_mutex_);
+        planning_cv_.wait(lock, [this]{ return pending_goal_ || shutdown_; });
+        if (shutdown_) return;
+        pending_goal_ = false;
+      }
 
-    for (const auto & wp : results) {
-      geometry_msgs::msg::PoseStamped ps;
-      ps.header = path_msg.header;
-      ps.pose.position.x = wp.x;
-      ps.pose.position.y = wp.y;
-      ps.pose.position.z = wp.z;
-      ps.pose.orientation.w = 1.0;
-      path_msg.poses.push_back(ps);
+      cancel_planning_ = false;
+
+      if (!map_ready_ || !planner_) continue;
+
+      // Resolve start point (may have changed since request was queued)
+      global_planner::PointPose start;
+      if (has_explicit_start_) {
+        start = start_point_;
+      } else if (has_odom_) {
+        const auto & p = latest_odom_.pose.pose.position;
+        start = {p.x, p.y, p.z};
+      } else {
+        RCLCPP_WARN(get_logger(), "Worker: no start available, skipping.");
+        continue;
+      }
+
+      if (!has_goal_) continue;
+
+      global_planner::PointPose goal = goal_point_;
+
+      RCLCPP_INFO(get_logger(), "Worker: planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)%s",
+                  start.x, start.y, start.z,
+                  goal.x, goal.y, goal.z,
+                  has_explicit_start_ ? "" : " [from odom]");
+
+      auto t0 = now();
+
+      std::vector<global_planner::PointPose> results;
+      {
+        std::lock_guard<std::mutex> lock(planning_mutex_);
+        if (cancel_planning_.load()) continue;
+
+        planner_->setCancelFlag(&cancel_planning_);
+        planner_->makePlan(start, goal);
+
+        if (cancel_planning_.load()) {
+          RCLCPP_INFO(get_logger(), "Worker: planning cancelled, discarding.");
+          continue;
+        }
+
+        planner_->getPlannerResults(results);
+      }
+      auto dt = (now() - t0).seconds();
+
+      if (results.empty()) {
+        RCLCPP_WARN(get_logger(), "Worker: planning failed — no path found (%.3fs)", dt);
+        nav_msgs::msg::Path empty_path;
+        empty_path.header.stamp = now();
+        empty_path.header.frame_id = get_parameter("frame_id").as_string();
+        path_pub_->publish(empty_path);
+        continue;
+      }
+
+      RCLCPP_INFO(get_logger(), "Worker: path found — %zu waypoints in %.3fs", results.size(), dt);
+
+      nav_msgs::msg::Path path_msg;
+      path_msg.header.stamp = now();
+      path_msg.header.frame_id = get_parameter("frame_id").as_string();
+      path_msg.poses.reserve(results.size());
+
+      for (const auto & wp : results) {
+        geometry_msgs::msg::PoseStamped ps;
+        ps.header = path_msg.header;
+        ps.pose.position.x = wp.x;
+        ps.pose.position.y = wp.y;
+        ps.pose.position.z = wp.z;
+        ps.pose.orientation.w = 1.0;
+        path_msg.poses.push_back(ps);
+      }
+
+      path_pub_->publish(path_msg);
     }
-
-    path_pub_->publish(path_msg);
   }
 
   void publish_octomap()
@@ -994,9 +1091,15 @@ private:
   void on_online_reanalyze()
   {
     if (!map_ready_) return;
-    RCLCPP_INFO(get_logger(), "Online reanalyze triggered...");
-    planner_->reanalyze();
-    republish_all();
+    // Run in background to avoid blocking the spin thread for seconds
+    // on large maps.  Serialised with planning via planning_mutex_.
+    std::thread([this]() {
+      std::lock_guard<std::mutex> lock(planning_mutex_);
+      if (!map_ready_) return;
+      RCLCPP_INFO(get_logger(), "Online reanalyze triggered (background)...");
+      planner_->reanalyze();
+      republish_all();
+    }).detach();
   }
 
   // Members
@@ -1032,6 +1135,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr load_map_sub_;
 
   rclcpp::TimerBase::SharedPtr republish_timer_;
+  rclcpp::TimerBase::SharedPtr replan_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_map_srv_;
 
   // Online incremental update
@@ -1040,6 +1144,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr online_cloud_sub_;
   rclcpp::TimerBase::SharedPtr online_update_timer_;
   double online_update_period_s_{60.0};
+  double replan_period_{0.0};
   double online_update_occupied_prob_{0.7};
   std::string online_update_cloud_topic_{"/lidar_points"};
   bool conservative_mode_{false};
@@ -1048,6 +1153,15 @@ private:
   int min_interval_ms_{500};
   int downsample_step_{1};
   rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
+
+  // Persistent background worker — spin thread is never blocked
+  std::thread worker_thread_;
+  std::mutex planning_mutex_;
+  std::atomic<bool> cancel_planning_{false};
+  std::condition_variable planning_cv_;
+  std::mutex planning_cv_mutex_;
+  bool pending_goal_ = false;
+  bool shutdown_ = false;
 };
 
 int main(int argc, char ** argv)

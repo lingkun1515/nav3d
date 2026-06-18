@@ -209,7 +209,8 @@ namespace global_planner
         const std::vector<GridIndex> directions = make26Directions();
         int iters = 0;
 
-        while (!open_set.empty() && iters < max_iterations) 
+        while (!open_set.empty() && iters < max_iterations
+               && (cancel_flag_ == nullptr || !cancel_flag_->load()))
         {
             const QueueNode current = open_set.top();
             open_set.pop();
