@@ -101,7 +101,7 @@ private:
     double cmd_angular_z_ = 0.0;
 
     // cmd_vel timeout: zero velocity if no message received within this duration
-    double cmd_vel_timeout_ = 0.2;
+    double cmd_vel_timeout_ = 0.5;
     double last_cmd_vel_time_ = 0.0;
 
     // PD gains

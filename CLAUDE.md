@@ -100,7 +100,7 @@ ros2 launch simulation gazebo.launch.py world:=.../worlds/map_nav3d.world
 ament_cmake package，集中管理所有 launch 文件和 RViz2 配置，无 C++/Python 节点。
 
 **内容：**
-- `launch/navigation.launch.py` — 完整导航栈启动（Gazebo + octo_planner + localPlanner + pathFollower + rosbridge + RViz2）
+- `launch/navigation.launch.py` — 导航栈启动（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2），不含 Gazebo 仿真
 - `config/navigation.rviz` — 导航栈 RViz2 可视化配置
 
 **启动参数：**
@@ -108,13 +108,14 @@ ament_cmake package，集中管理所有 launch 文件和 RViz2 配置，无 C++
 |------|--------|------|
 | `pcd_file` | `""` | 地图文件（支持 .pcd/.bt/.ot/.world/.sdf）。Gazebo 世界需离线生成（bt_to_world.py / pcd_to_world.py） |
 | `launch_rviz` | `true` | 是否启动 RViz2 |
+| `launch_rosbridge` | `false` | 是否启动 rosbridge WebSocket |
 | `use_sim_time` | `true` | 使用仿真时间 |
 
 ```bash
-# 完整导航闭环
+# 仅导航栈（需另外启动 Gazebo 仿真）
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+# 指定地图文件
 ros2 launch bringup navigation.launch.py pcd_file:=/path/to/map.pcd
-# 空地模式
-ros2 launch bringup navigation.launch.py
 # 不启动 RViz2
 ros2 launch bringup navigation.launch.py launch_rviz:=false
 ```
@@ -195,20 +196,25 @@ source install/setup.bash
 
 ### 启动命令
 ```bash
-# 完整导航闭环（Gazebo + octo_planner + localPlanner + pathFollower + rosbridge + RViz2）
-# 提供 pcd_file 时自动生成 Gazebo 世界场景
-ros2 launch bringup navigation.launch.py  # 自动加载 maps/map_nav3d.bt（首次从 PCD 转换并缓存，地图位于 src/bringup/maps/）
+# 仿真和导航栈需分开启动
 
-# 无 PCD 时使用空地世界（仅测试运动控制）
-ros2 launch bringup navigation.launch.py
+# 终端 1: Gazebo 仿真
+ros2 launch simulation gazebo.launch.py world:=.../worlds/map_nav3d.world
+
+# 终端 2: 导航栈（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2）
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+
+# 空地模式（无 world 文件）
+ros2 launch simulation gazebo.launch.py
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 
 # 不启动 RViz2（仅终端）
-ros2 launch bringup navigation.launch.py launch_rviz:=false
+ros2 launch bringup navigation.launch.py launch_rviz:=false launch_rosbridge:=true
 ```
 
 ### 数据流
 ```
-完整管线 (navigation.launch.py):
+完整管线 (仿真 + 导航栈):
   Web UI ─/goal_pose→ octo_planner ─/planned_path→ localPlanner (航点管理+TF)
          ─/start_navigation→ localPlanner
          ─/stop_navigation→ pathFollower

@@ -53,19 +53,25 @@ python3 src/simulation/scripts/pcd_to_world.py \
 > 注意：两个脚本都读取占据体素，去除最低 Z 层（地面），将剩余体素合并为碰撞 box。
 > `--resolution 0.3` 控制体素大小（越小越精细），`--max-boxes 3000` 限制最大 box 数。
 
-### 4.1 完整导航闭环（一键启动）
+### 4.1 完整导航闭环（仿真 + 导航栈分开启动）
+
+仿真和导航栈不再合并为一个 launch 文件，需分开启动：
 
 ```bash
-ros2 launch bringup navigation.launch.py
+# 终端 1: Gazebo 仿真
+ros2 launch simulation gazebo.launch.py world:=.../worlds/map_nav3d.world
+
+# 终端 2: 导航栈
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 ```
 
-此命令同时启动：Gazebo（加载 `map_nav3d.world`，无则用 empty.world）+ octo_planner + localPlanner + pathFollower + rosbridge + RViz2。
+同时启动：Gazebo（加载指定的 world 文件）+ octo_planner + latticePlanner + pathFollower + rosbridge + RViz2。
 所有逻辑均在 C++ 节点内闭环，无 Python 中继节点。
 
 不启动 RViz2 时：
 
 ```bash
-ros2 launch bringup navigation.launch.py launch_rviz:=false
+ros2 launch bringup navigation.launch.py launch_rviz:=false launch_rosbridge:=true
 ```
 
 **启动参数：**
@@ -74,7 +80,17 @@ ros2 launch bringup navigation.launch.py launch_rviz:=false
 |------|--------|------|
 | `pcd_file` | 自动检测 | 地图文件路径（格式详见 quickstart），默认 src/bringup/maps/map_nav3d.bt |
 | `launch_rviz` | `true` | 是否启动 RViz2（使用 `bringup/config/navigation.rviz`） |
+| `launch_rosbridge` | `false` | 是否启动 rosbridge WebSocket（Web UI 需要） |
 | `use_sim_time` | `true` | 使用仿真时间 |
+
+Gazebo 仿真启动参数（`simulation/gazebo.launch.py`）：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `world` | `empty.world` | Gazebo 世界文件路径 |
+| `robot_model` | `car` | 机器人模型: `car` / `a1` |
+| `x`, `y`, `z`, `yaw` | `0, 0, 0.1/0.3, 0` | 机器人初始位姿 |
+| `launch_rosbridge` | `true` | Gazebo launch 自带 rosbridge |
 
 ### 4.2 分步启动（调试用）
 
@@ -90,7 +106,7 @@ ros2 run octo_planner octo_planner_node --ros-args \
   -p resolution:=0.2 -p robot_radius:=0.05
 
 # 终端 3: 局部规划 + 轨迹跟踪
-ros2 run local_planner localPlanner --ros-args \
+ros2 run local_planner latticePlanner --ros-args \
   -p autonomyMode:=true -p use_laser_scan:=true -p use_planned_path:=true &
 ros2 run local_planner pathFollower --ros-args \
   -p autonomyMode:=true &
@@ -149,7 +165,7 @@ ros2 run rosbridge_server rosbridge_websocket --ros-args -p port:=9090 &
 
 ### 7.1 RViz2 可视化
 
-一键启动时 RViz2 已自动打开，配置文件 `bringup/config/navigation.rviz` 预置了所有显示：
+分步启动时 RViz2 已包含在导航栈 launch 中，配置文件 `bringup/config/navigation.rviz` 预置了所有显示：
 
 - **TF** — map/odom/base_link/base_footprint/lidar_link 坐标系
 - **RobotModel** — 差速小车 3D 模型
@@ -231,14 +247,13 @@ ros2 topic pub /way_point geometry_msgs/PointStamped \
 ─────────────────────────────────────────────────────────────────────────────
 /goal_pose                  PoseStamped               Web UI     → octo_planner
 /start_point                PointStamped              Web UI     → octo_planner
-/start_navigation           Bool                      Web UI     → localPlanner
 /stop_navigation            Bool                      Web UI     → pathFollower
-/planned_path               Path                      octo_planner → localPlanner
-/odom                       Odometry                  Gazebo      → localPlanner, pathFollower
-/scan                       LaserScan                 Gazebo      → localPlanner
-/path                       Path                      localPlanner → pathFollower
-/slow_down                  Int8                      localPlanner → pathFollower
-/surrounding_block          Int8                      localPlanner → pathFollower
+/planned_path               Path                      octo_planner → latticePlanner
+/odom                       Odometry                  Gazebo      → latticePlanner, pathFollower
+/scan                       LaserScan                 Gazebo      → latticePlanner
+/path                       Path                      latticePlanner → pathFollower
+/slow_down                  Int8                      latticePlanner → pathFollower
+/surrounding_block          Int8                      latticePlanner → pathFollower
 /cmd_vel                    Twist                     pathFollower → Gazebo
 /tf                         TFMessage                 Gazebo      → Web UI / 各节点
 /web_cmd_vel                Twist                     Web UI      → pathFollower

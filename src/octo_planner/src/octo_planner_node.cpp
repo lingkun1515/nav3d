@@ -205,7 +205,7 @@ private:
         [this]() {
           if (map_ready_ && has_goal_) {
             RCLCPP_INFO(get_logger(), "Timer re-plan (period=%.1fs)", replan_period_);
-            start_planning();
+            start_planning(false);  // don't clear path, just replace atomically
           }
         });
       RCLCPP_INFO(get_logger(), "Periodic re-plan enabled: %.1fs", replan_period_);
@@ -553,7 +553,7 @@ private:
     path_pub_->publish(empty);
   }
 
-  void start_planning()
+  void start_planning(bool clear_first = true)
   {
     if (!map_ready_) {
       RCLCPP_WARN(get_logger(), "Map not ready.");
@@ -568,8 +568,11 @@ private:
     // Cancel any ongoing A* search (checked every iteration, exits in microseconds)
     cancel_planning_ = true;
 
-    // Signal "re-planning" immediately — spin thread returns here in microseconds
-    clear_planned_path();
+    // Clear old path when goal changed; skip for timer re-plans
+    // (empty path resets latticePlanner freeze state, breaking rotation recovery)
+    if (clear_first) {
+      clear_planned_path();
+    }
 
     // Wake up the persistent worker to start fresh planning
     {

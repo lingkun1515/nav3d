@@ -128,10 +128,6 @@ private:
       "/near_corridor", qos,
       [this](std_msgs::msg::Bool::ConstSharedPtr msg) { near_corridor_ = msg->data; });
 
-
-    sub_web_cmd_vel_ = create_subscription<geometry_msgs::msg::Twist>(
-      "/web_cmd_vel", qos,
-      [this](geometry_msgs::msg::Twist::ConstSharedPtr msg) { web_cmd_vel_callback(msg); });
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", qos);
   }
 

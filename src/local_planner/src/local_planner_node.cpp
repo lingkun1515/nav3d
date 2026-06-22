@@ -607,11 +607,10 @@ private:
 
   void planned_path_callback(const nav_msgs::msg::Path::ConstSharedPtr path)
   {
-    // Reset all per-navigation state for new path
-    freezeStatus_ = 0;
-    freezeStartTime_ = 0;
-
     if (path->poses.empty()) {
+      // Reset all state only on explicit clear (empty path)
+      freezeStatus_ = 0;
+      freezeStartTime_ = 0;
       RCLCPP_WARN(get_logger(), "Received empty planned path — clearing waypoints");
       planned_waypoints_.clear();
       current_wp_idx_ = 0;
@@ -619,6 +618,7 @@ private:
       has_goal_ = false;
       return;
     }
+    // Preserve freeze state across re-plans so rotation recovery can complete
     planned_waypoints_.clear();
     for (const auto & pose : path->poses) {
       planned_waypoints_.emplace_back(

@@ -86,8 +86,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world',
             default_value=os.path.join(pkg_share, 'worlds', 
-                                    #    'urban2_story.world'
-                                       'empty_world.world'
+                                       'urban2_story.world'
+                                    #    'empty_world.world'
+                                    #    'map_nav3d.world'
                                        ),
             description='Gazebo world file'
         ),
@@ -98,14 +99,14 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'robot_model',
-            default_value='car',
+            default_value='a1',
             description='Robot model: car or a1'
         ),
         DeclareLaunchArgument(
             'x', default_value='0.0', description='Robot initial X position'
         ),
         DeclareLaunchArgument(
-            'y', default_value='0.0', description='Robot initial Y position'
+            'y', default_value='-0.0', description='Robot initial Y position'
         ),
         DeclareLaunchArgument(
             'z', default_value='0.1',

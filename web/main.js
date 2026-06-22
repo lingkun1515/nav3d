@@ -1120,7 +1120,7 @@ function setupTopics() {
   goalTopic = new ROSLIB.Topic({ ros, name: '/goal_point', messageType: 'geometry_msgs/PointStamped' });
   goalPoseTopic = new ROSLIB.Topic({ ros, name: '/goal_pose', messageType: 'geometry_msgs/PoseStamped' });
   stopNavTopic = new ROSLIB.Topic({ ros, name: '/stop_navigation', messageType: 'std_msgs/Bool' });
-  cmdVelTopic = new ROSLIB.Topic({ ros, name: '/web_cmd_vel', messageType: 'geometry_msgs/Twist' });
+  cmdVelTopic = new ROSLIB.Topic({ ros, name: '/cmd_vel', messageType: 'geometry_msgs/Twist' });
   addVoxelsTopic = new ROSLIB.Topic({ ros, name: '/add_occupied_voxels', messageType: 'sensor_msgs/PointCloud2' });
   removeVoxelsTopic = new ROSLIB.Topic({ ros, name: '/remove_occupied_voxels', messageType: 'sensor_msgs/PointCloud2' });
   saveMapTopic = new ROSLIB.Topic({ ros, name: '/save_octomap_path', messageType: 'std_msgs/String' });

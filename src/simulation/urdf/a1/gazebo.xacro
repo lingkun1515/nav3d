@@ -29,6 +29,9 @@
             <odomTopic>/odom</odomTopic>
             <jointStateTopic>/joint_states</jointStateTopic>
 
+            <!-- cmd_vel timeout: zero velocity if no message received (default 0.5s) -->
+            <cmdVelTimeout>0.5</cmdVelTimeout>
+
             <!-- TF frames -->
             <odomFrameId>odom</odomFrameId>
             <robotBaseFrame>base_footprint</robotBaseFrame>
