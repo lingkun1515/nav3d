@@ -50,5 +50,3 @@ src/simulation/models/
 
 # Claude Code
 .claude/
-
-docker/

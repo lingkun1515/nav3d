@@ -42,7 +42,7 @@ def generate_launch_description():
 
     # Plugin paths: our custom plugin + standard gazebo_ros + system default
     plugin_path = os.path.join(pkg_share, '..', '..', 'lib')
-    ros_gazebo_plugins = '/opt/ros/humble/lib'
+    ros_gazebo_plugins = os.path.join('/opt', 'ros', os.environ.get('ROS_DISTRO', 'foxy'), 'lib')
     system_gazebo_plugins = '/usr/lib/x86_64-linux-gnu/gazebo-11/plugins'
     existing_plugin_path = os.environ.get('GAZEBO_PLUGIN_PATH', '')
     if existing_plugin_path:
