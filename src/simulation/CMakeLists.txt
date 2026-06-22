@@ -35,6 +35,13 @@ target_include_directories(A1RLController PRIVATE
   ${GAZEBO_INCLUDE_DIRS}
   ${gazebo_ros_INCLUDE_DIRS}
   ${ONNXRUNTIME_INCLUDE_DIR}
+  ${rclcpp_INCLUDE_DIRS}
+  ${geometry_msgs_INCLUDE_DIRS}
+  ${nav_msgs_INCLUDE_DIRS}
+  ${sensor_msgs_INCLUDE_DIRS}
+  ${tf2_ros_INCLUDE_DIRS}
+  ${tf2_geometry_msgs_INCLUDE_DIRS}
+  ${tf2_msgs_INCLUDE_DIRS}
 )
 
 target_link_libraries(A1RLController
