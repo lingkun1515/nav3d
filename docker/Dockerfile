@@ -5,6 +5,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
+# Ensure ROS libraries are discoverable by Gazebo plugins loaded via
+# GAZEBO_PLUGIN_PATH. Without this, libgazebo_ros_factory.so fails to load
+# its dependencies (libgazebo_msgs__rosidl_typesupport_cpp.so etc.) when
+# launched via ros2 launch, because the gzserver subprocess may not inherit
+# the full runtime LD_LIBRARY_PATH from the sourced setup.bash.
+ENV LD_LIBRARY_PATH=/opt/ros/foxy/lib:${LD_LIBRARY_PATH}
+
 # ROS 2 Foxy setup
 # Retry-friendly install: NVIDIA/cuda repo can be flaky, so loop apt-get install
 # with --fix-missing to tolerate transient single-package fetch failures.

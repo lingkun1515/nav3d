@@ -40,22 +40,24 @@ def generate_launch_description():
 
     robot_description = ParameterValue(Command(['xacro ', urdf_expr]), value_type=str)
 
-    # Plugin paths: our custom plugin + standard gazebo_ros + system default
+    # Plugin path: our custom plugin dir (A1RLController.so) + stock gazebo_ros
+    # + system defaults. The simulation package.xml also exports
+    # <gazebo_ros plugin_path="${prefix}/lib"> so GazeboRosPaths discovers it
+    # too — this prevents a leading-colon in the merged GAZEBO_PLUGIN_PATH that
+    # breaks libgazebo_ros_factory.so service registration on Foxy.
     plugin_path = os.path.join(pkg_share, '..', '..', 'lib')
     ros_gazebo_plugins = os.path.join('/opt', 'ros', os.environ.get('ROS_DISTRO', 'foxy'), 'lib')
     system_gazebo_plugins = '/usr/lib/x86_64-linux-gnu/gazebo-11/plugins'
     existing_plugin_path = os.environ.get('GAZEBO_PLUGIN_PATH', '')
+    parts = [plugin_path, ros_gazebo_plugins, system_gazebo_plugins]
     if existing_plugin_path:
-        gazebo_plugin_path = f'{plugin_path}:{ros_gazebo_plugins}:{system_gazebo_plugins}:{existing_plugin_path}'
-    else:
-        gazebo_plugin_path = f'{plugin_path}:{ros_gazebo_plugins}:{system_gazebo_plugins}'
+        parts.append(existing_plugin_path)
+    gazebo_plugin_path = ':'.join(parts)
 
-    # Set os.environ directly so gzserver.launch.py can read them.
-    # gzserver.launch.py's generate_launch_description() reads os.environ
-    # (not the launch context), so SetEnvironmentVariable alone does not
-    # propagate to the inner launch file's Python code.
     os.environ['GAZEBO_MODEL_PATH'] = model_path
-    os.environ['GAZEBO_PLUGIN_PATH'] = gazebo_plugin_path
+    # Note: do NOT set os.environ['GAZEBO_PLUGIN_PATH'] here. gzserver.launch.py
+    # merges it with GazeboRosPaths output; the package.xml export handles
+    # discovery. We propagate the full path via SetEnvironmentVariable below.
 
     # LD_LIBRARY_PATH for ONNX Runtime libs — installed to lib/simulation/
     onnx_lib_dir = os.path.join(pkg_share, '..', '..', 'lib', 'simulation')
@@ -82,6 +84,9 @@ def generate_launch_description():
         SetEnvironmentVariable('GAZEBO_MODEL_PATH', model_path),
         SetEnvironmentVariable('GAZEBO_PLUGIN_PATH', gazebo_plugin_path),
         SetEnvironmentVariable('LD_LIBRARY_PATH', ld_library_path),
+        # Disable online model database fetch — prevents gzserver from blocking
+        # on http://models.gazebosim.org during startup (network-restricted envs).
+        SetEnvironmentVariable('GAZEBO_MODEL_DATABASE_URI', ''),
 
         DeclareLaunchArgument(
             'world',

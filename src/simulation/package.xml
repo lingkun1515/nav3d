@@ -27,5 +27,9 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <!-- Export plugin path so GazeboRosPaths discovers A1RLController.so.
+         On Foxy this also avoids a leading-colon in GAZEBO_PLUGIN_PATH that
+         breaks libgazebo_ros_factory.so service registration. -->
+    <gazebo_ros plugin_path="${prefix}/lib"/>
   </export>
 </package>
