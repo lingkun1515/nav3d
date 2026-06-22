@@ -649,6 +649,7 @@ function quaternionToYaw(q) {
   return Math.atan2(siny, cosy);
 }
 
+let resolveRobotPoseDebounce = 0;
 function resolveRobotPose() {
   // Try direct map -> base
   for (const base of baseFrameCandidates) {
@@ -661,21 +662,38 @@ function resolveRobotPose() {
 
   // Try chained: map -> odom -> base
   const mapOdom = getTransform('map', 'odom');
-  if (!mapOdom) return null;
+  if (mapOdom) {
+    for (const base of baseFrameCandidates) {
+      const odomBase = getTransform('odom', base);
+      if (!odomBase) continue;
 
-  for (const base of baseFrameCandidates) {
-    const odomBase = getTransform('odom', base);
-    if (!odomBase) continue;
-
-    const mapYaw = quaternionToYaw(mapOdom.rotation);
-    const bx = odomBase.translation.x;
-    const by = odomBase.translation.y;
-    const x = mapOdom.translation.x + Math.cos(mapYaw) * bx - Math.sin(mapYaw) * by;
-    const y = mapOdom.translation.y + Math.sin(mapYaw) * bx + Math.cos(mapYaw) * by;
-    const z = mapOdom.translation.z + odomBase.translation.z;
-    const yaw = mapYaw + quaternionToYaw(odomBase.rotation);
-    return { x, y, z, yaw };
+      const mapYaw = quaternionToYaw(mapOdom.rotation);
+      const bx = odomBase.translation.x;
+      const by = odomBase.translation.y;
+      const x = mapOdom.translation.x + Math.cos(mapYaw) * bx - Math.sin(mapYaw) * by;
+      const y = mapOdom.translation.y + Math.sin(mapYaw) * bx + Math.cos(mapYaw) * by;
+      const z = mapOdom.translation.z + odomBase.translation.z;
+      const yaw = mapYaw + quaternionToYaw(odomBase.rotation);
+      return { x, y, z, yaw };
+    }
   }
+
+  // Fallback: no map frame, use odom -> base directly (sim-only setup)
+  for (const base of baseFrameCandidates) {
+    const tf = getTransform('odom', base);
+    if (tf) {
+      const yaw = quaternionToYaw(tf.rotation);
+      return { x: tf.translation.x, y: tf.translation.y, z: tf.translation.z, yaw };
+    }
+  }
+
+  // Debug: dump TF keys once every 60 frames (~1s)
+  if (resolveRobotPoseDebounce === 0) {
+    const keys = Array.from(tfState.keys()).filter(k => k.includes('odom') || k.includes('base')).sort();
+    console.warn('[resolveRobotPose] returning null. TF keys with odom/base:', keys);
+    console.warn('[resolveRobotPose] candidates tried:', baseFrameCandidates);
+  }
+  resolveRobotPoseDebounce = (resolveRobotPoseDebounce + 1) % 60;
 
   return null;
 }
@@ -701,6 +719,11 @@ function updateRobotModel() {
   tfStatus.textContent = `(${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)}) yaw=${(pose.yaw * 180 / Math.PI).toFixed(0)}°`;
   if (!poseFirstReceived) {
     poseFirstReceived = true;
+    // Auto-center camera on robot
+    const dist = 5.0;
+    camera.position.set(pose.x + dist * 0.7, pose.y - dist * 0.7, pose.z + dist * 0.5);
+    controls.target.set(pose.x, pose.y, pose.z);
+    controls.update();
     log(`机器人已定位: (${pose.x.toFixed(2)}, ${pose.y.toFixed(2)}, ${pose.z.toFixed(2)})`, 'ok');
   }
 
@@ -1003,7 +1026,6 @@ function onJoystickDown(event) {
   event.preventDefault();
   joystickKnob.setPointerCapture(event.pointerId);
   joystickActive = true;
-  ensureRepeatTimer();
 }
 
 function onJoystickMove(event) {
@@ -1025,6 +1047,7 @@ function onJoystickMove(event) {
   joystickLinearX = applySpeedCurve(dy, JOYSTICK_MAX_LINEAR);
   joystickLinearY = applySpeedCurve(-dx, JOYSTICK_MAX_LINEAR);
   publishCmdVel(joystickLinearX, joystickLinearY, joystickAngularZ);
+  ensureRepeatTimer();
 }
 
 function onJoystickUp(event) {

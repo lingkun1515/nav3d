@@ -147,7 +147,7 @@ void A1RLController::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr sdf) 
     joint_state_pub_ =
         ros_node_->create_publisher<sensor_msgs::msg::JointState>(joint_state_topic, 10);
 
-    tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(ros_node_);
+    tf_pub_ = ros_node_->create_publisher<tf2_msgs::msg::TFMessage>("/tf", 100);
 
     // Reset timing
     stand_up_start_time_ = model_->GetWorld()->SimTime().Double();
@@ -426,7 +426,9 @@ void A1RLController::PublishState(const gazebo::common::Time& now) {
     tf.transform.rotation.x = rel_pose.Rot().X();
     tf.transform.rotation.y = rel_pose.Rot().Y();
     tf.transform.rotation.z = rel_pose.Rot().Z();
-    tf_broadcaster_->sendTransform(tf);
+    auto tf_msg = std::make_unique<tf2_msgs::msg::TFMessage>();
+    tf_msg->transforms.push_back(tf);
+    tf_pub_->publish(std::move(tf_msg));
 
     // Publish joint states
     sensor_msgs::msg::JointState joint_state;

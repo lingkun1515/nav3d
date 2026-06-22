@@ -8,7 +8,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
-#include <tf2_ros/transform_broadcaster.h>
+#include <tf2_msgs/msg/tf_message.hpp>
 
 #include <onnxruntime_cxx_api.h>
 
@@ -45,7 +45,7 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
-    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr tf_pub_;
     std::string odom_frame_id_ = "odom";
     std::string robot_base_frame_ = "base_footprint";
 
@@ -74,11 +74,14 @@ private:
     static constexpr int reindex_[12] = {3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8};
 
     // Default joint positions in RL model order (FL, FR, RL, RR)
+    // Thigh/calf values tuned to match ONNX model's expected neutral stance:
+    // model outputs ~1.3 on thighs at idle → expected target ≈ 0.55+0.325=0.875
+    // Setting thighs to ~0.85 eliminates the idle bias that caused backward slip
     std::array<float, 12> default_dof_pos_ = {
-        -0.15f, 0.55f, -1.5f,   // FL: hip, thigh, calf
-         0.15f, 0.55f, -1.5f,   // FR: hip, thigh, calf
-        -0.15f, 0.70f, -1.5f,   // RL: hip, thigh, calf
-         0.15f, 0.70f, -1.5f    // RR: hip, thigh, calf
+        -0.15f, 0.85f, -1.6f,   // FL: hip, thigh, calf
+         0.15f, 0.85f, -1.6f,   // FR: hip, thigh, calf
+        -0.15f, 0.85f, -1.6f,   // RL: hip, thigh, calf
+         0.15f, 0.85f, -1.6f    // RR: hip, thigh, calf
     };
 
     // Observation history: 5 steps × 45 dims
