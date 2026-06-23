@@ -36,6 +36,7 @@ Thumbs.db
 # ROS 2 bag files
 *.db3
 *.yaml.bak
+docker/rosbag
 
 # Map data (large files, manage separately)
 *.pcd

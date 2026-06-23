@@ -22,7 +22,7 @@ def generate_launch_description():
     local_share = get_package_share_directory('local_planner')
     bringup_share = get_package_share_directory('bringup')
 
-    nav_params = os.path.join(bringup_share, 'config', 'navigation.yaml')
+    nav_params = os.path.join(bringup_share, 'config', 'navigation_config.yaml')
     path_folder = os.path.join(local_share, 'paths')
     rviz_config = os.path.join(bringup_share, 'config', 'navigation.rviz')
     use_sim_time = LaunchConfiguration('use_sim_time')

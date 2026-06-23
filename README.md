@@ -86,6 +86,58 @@ Dog3DNav 的三大核心组件基于开源项目集成、组装与改进：
 
 ## 坐标系约定
 
-- `map` — 全局固定坐标系（SLAM 输出）
-- `odom` — 里程计坐标系
+- `world` — 全局固定坐标系（SLAM 输出, `super_lio` 发布）
+- `odom` — 里程计坐标系（仿真时 Gazebo 真值 / 实机时由 SLAM remap 提供）
+- `imu` — IMU 坐标系（`super_lio` 动态 TF 发布 `world→imu`）
+- `base_footprint` — 机器人足底投影（静态 TF）
 - `base_link` — 机器人本体坐标系
+
+## 实际部署
+
+### 仿真全流程
+
+```bash
+# 终端 1 — Gazebo
+ros2 launch simulation gazebo.launch.py
+
+# 终端 2 — 导航(仿真已自带 /odom, 不需要 SLAM)
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+```
+
+### 实机全流程
+
+```bash
+# 终端 1 — 启动 Livox 驱动(Mid360) + 确保 /livox/lidar /livox/imu 正常
+# （按 Livox 官方文档配置，话题名需为 /livox/lidar 和 /livox/imu）
+
+# 终端 2 — SLAM 建图
+ros2 launch bringup slam.launch.py mode:=mapping
+# 或 重定位(加载已有地图后使用)
+ros2 launch bringup slam.launch.py mode:=relocation \
+    init_pose:="[x, y, z, roll, pitch, yaw]"
+
+# 终端 3 — 导航
+ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+
+# 终端 4(宿主机) — Web UI
+cd web && python3 -m http.server 8000
+```
+
+`slam.launch.py` 做了完整的话题适配, 输出 `/odom` 和 `/lidar_points`, `navigation.launch.py` 无需任何改动即可与 SLAM 对接。
+
+### SLAM launch 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `mode` | `mapping` | `mapping`(建图) 或 `relocation`(重定位) |
+| `rviz` | `false` | 是否启动 RViz2 可视化 |
+| `use_sim_time` | `true` | 使用仿真/GPS 时间 |
+| `init_pose` | `[0,0,0,0,0,0]` | 重定位初值 `[x,y,z,roll,pitch,yaw]` |
+
+### 话题对齐
+
+| 导航栈期望 | SLAM 原生 | 对齐方式 |
+|-----------|----------|---------|
+| `/odom` | `/lio/odom` | `slam.launch.py` 内 remap |
+| `/lidar_points` | `/lio/cloud_world` | `slam.launch.py` 内 remap |
+| TF: `world→base_link` | `world→imu`(SLAM 动态) | `slam.launch.py` 补静态 `imu→base_footprint→base_link` |
