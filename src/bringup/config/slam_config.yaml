@@ -1,0 +1,74 @@
+# SLAM 建图/定位模式统一配置
+# 用于 slam.launch.py，mode=mapping 或 mode=relocation
+# 基础参数来源于 super_lio config/livox_360.yaml，IMU 噪声已针对
+# Livox MID360 内置 BMI 系列 IMU 调优。
+
+/**:
+  ros__parameters:
+    # ---- 地图 ----
+    lio.map.save_map: false
+    lio.map.if_filter: true
+    lio.map.save_map_dir: "map"
+    lio.map.map_name: "map.pcd"
+    lio.map.ds_size: 0.25
+    lio.map.save_interval: 500
+
+    # ---- 传感器话题 ----
+    lio.ros.lidar_topic: "/livox/lidar"
+    lio.ros.imu_topic: "/livox/imu"
+
+    # ---- 全局坐标系 (导航栈统一使用 map) ----
+    lio.global.frame_id: "map"
+
+    # ---- 激光雷达 ----
+    lio.sensor.lidar_type: 1            # LIVOX (PointCloud2 + CustomMsg 双订阅)
+    lio.sensor.blind: 2.0               # 盲区 2m
+    lio.sensor.maxrange: 60.0           # 最大 60m
+    lio.sensor.filter_rate: 3           # 点云降采样 (每 3 点取 1)
+    lio.sensor.enable_downsample: true
+    lio.sensor.voxel_fliter_size: 0.5
+
+    # ---- IMU (Mid360 内置 BMI 系列) ----
+    lio.sensor.gravity_norm: 9.7946
+    lio.sensor.imu_type: 1
+    lio.sensor.imu_na: 0.01             # 加速度计白噪声 (0.1→0.01 减小 lidar 修正量 50%)
+    lio.sensor.imu_ng: 0.01             # 陀螺仪白噪声
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.0001
+
+    # ---- 外参 (lidar → imu 变换, 即 lidar 原点在 IMU 系下的坐标) ----
+    # 平移 [x, y, z], 旋转按行主序存入 [r11, r12, ..., r33]
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
+                              1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+    lio.extrinsic.odom_robo: [0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0]
+
+    # ---- 哈希地图 ----
+    lio.hash_map.hash_capacity: 2000000
+    lio.hash_map.vox_resolution: 0.5
+
+    # ---- 卡尔曼滤波 ----
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+
+    # ---- 输出话题 ----
+    lio.output.robot: true
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.map: true
+    lio.output.dense: true
+    lio.output.pub_step: 1
+
+    # ---- 性能评估 ----
+    lio.eva.timer: true
+
+    # ---- 重定位 (仅 mode=relocation 时生效) ----
+    lio.relocation.update_map: true
+    # 初值: [x, y, z, roll, pitch, yaw] — 由 launch 参数 init_pose 传入
+    lio.relocation.init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
