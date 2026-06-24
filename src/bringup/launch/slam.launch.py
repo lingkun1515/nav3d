@@ -14,9 +14,8 @@ Dog3DNav SLAM 建图 / 重定位 启动文件
   /lio/imu/odom    ← 纯 IMU 预测里程计 (frame_id=map, 供调试)
 
 TF 链:
-  map → imu                    (super_lio 动态发布)
-  imu → base_footprint         (静态, slam.launch.py 补齐)
-  base_footprint → base_link   (静态, slam.launch.py 补齐)
+  map → livox_frame            (super_lio 动态发布)
+  livox_frame → base_link      (静态, 雷达在 base 前方 0.13m, 俯角 15°)
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -53,23 +52,15 @@ def generate_launch_description():
                               description='重定位初值 [x,y,z,roll,pitch,yaw]'),
     ])
 
-    # ---- TF 桥接: 补齐 imu→base_footprint→base_link ----
-    # super_lio 发布 world→imu。这里补上机器人基座链路的静态外参。
-    # TODO: 填入机器人模型实际值替换全零。
+    # ---- TF 桥接 ----
+    # super_lio 发布 map→livox_frame (lio.global.imu_frame="livox_frame")。
+    # 这里补齐：livox_frame→base_link (雷达在机器人中心前方 0.13m, 俯角 15°)
     ld.add_action(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='static_tf_imu_to_base_footprint',
-        arguments=['0', '0', '0', '0', '0', '0', '1',
-                   'imu', 'base_footprint'],
-        parameters=[{'use_sim_time': use_sim_time}],
-    ))
-    ld.add_action(Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_base_footprint_to_base_link',
-        arguments=['0', '0', '0', '0', '0', '0', '1',
-                   'base_footprint', 'base_link'],
+        name='static_tf_livox_to_base_link',
+        arguments=['-0.13', '0', '0.0', '0', '-0.261799', '0',
+                   'livox_frame', 'base_link'],
         parameters=[{'use_sim_time': use_sim_time}],
     ))
 

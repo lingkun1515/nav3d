@@ -64,7 +64,7 @@ octo_planner_node:
     occupied_cloud_radius: 10.0
 
     # Online incremental OctoMap update from real-time point cloud
-    online_update_enabled: false
+    online_update_enabled: true
     online_update_cloud_topic: "/lidar_points"
     online_update_period_s: 10.0
     online_update_occupied_prob: 0.7
