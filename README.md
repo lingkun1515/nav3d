@@ -32,16 +32,16 @@ Dog3DNav/
 │   │   ├── config/            #   ├─ navigation_config.yaml（导航栈统一参数）、slam_config.yaml、navigation.rviz
 │   │   └── maps/              #   └─ 地图文件 + 预处理脚本（map_nav3d.bt/.pcd、map_preprocessor.py、npz_to_bt.py）
 │   ├── simulation/            # Gazebo 仿真（差速轮小车 URDF + PCD/BT→.world 场景生成），launch gazebo.launch.py
-│   ├── livox_ros_driver2/     # Livox Mid360 雷达驱动（嵌套 git 仓库），实机数据源，发布 /livox/lidar /livox/imu
+│   ├── drivers/               # 外部驱动模块
 │   ├── slam/                  # 建图/重定位（嵌套 git 仓库，Super-LIO），节点 super_lio_node / relocation_node
 │   └── embodied/              # 具身感知理解模块（预留占位，暂未开发）
-├── web/                       # Web 前端（Three.js + ROSBridge）：3D 可视化、选点导航、地图编辑，server.py 提供静态服务 + 文件 API
-├── scripts/                   # 顶层工具脚本（Livox CustomMsg → PointCloud2 rosbag 离线转换等）
+├── web/                       # Web 前端（Three.js + ROSBridge）：3D 可视化、选点导航、地图编辑
+├── scripts/                   # 顶层工具脚本（rosbag 转换、清理脚本等）
 ├── docker/                    # Docker 配置（Dockerfile / build.sh / run.sh / entrypoint.sh，Foxy GPU 镜像）
 └── docs/                      # 项目文档
 ```
 
-> **关于嵌套仓库**：`src/livox_ros_driver2` 和 `src/slam`（Super-LIO）各自是独立的 git 仓库（有自己的 `.git` 与外部 GitHub 远程），暂**未**登记为 git submodule（仓库内无 `.gitmodules`）。它们由外部独立管理、克隆到本地即可参与 colcon 编译，不纳入本仓库版本控制。
+> **关于嵌套仓库**：`src/drivers/livox_ros_driver2` 和 `src/slam`（Super-LIO）各自是独立的 git 仓库（有自己的 `.git` 与外部 GitHub 远程），暂未登记为 git submodule（仓库内无 `.gitmodules`）。它们由外部独立管理、克隆到本地即可参与 colcon 编译，不纳入本仓库版本控制。
 
 ## 文档
 
@@ -66,8 +66,6 @@ Dog3DNav 的核心组件基于开源项目集成、组装与改进：
 |------|------|------|------|
 | `octo_planner` | [OctoPlanner3D](https://github.com/JackJu-HIT/OctoPlanner3D)（内置 `thirdparty/`，直接编译） | `octo_planner_node` | 加载 PCD/OctoMap → 可通行性分析 → 3D A\* 全局路径规划 |
 | `local_planner` | 移植自 CMU [autonomy_stack](https://github.com/jizhang-cmu/autonomy_stack_mecanum_wheel_platform) | `latticePlanner` + `pathFollower` | 预生成路径集局部规划 + pure-pursuit 跟踪 → `/cmd_vel` |
-| `slam` | [Super-LIO](https://github.com/Liansheng-Wang/Super-LIO) | `super_lio_node` / `relocation_node` | Livox Mid360 + IMU 紧耦合 LIO 建图/重定位 |
-| `livox_ros_driver2` | [Livox-SDK](https://github.com/Livox-SDK/livox_ros_driver2) | `livox_ros_driver2_node` | Mid360 雷达驱动，实机数据源 |
 | `web` | 参考 [jie_3d_nav](https://github.com/6-robot/jie_3d_nav) | — | Three.js + ROSBridge 3D 可视化、选点导航、地图编辑 |
 
 在集成基础上本项目进行了大量功能改进与系统完善：
@@ -148,8 +146,7 @@ ros2 launch bringup slam.launch.py mode:=relocation \
 
     # 终端 3 — 导航
     ros2 launch bringup navigation.launch.py launch_rosbridge:=true
-    # 如需直接控制 Go2（cmd_vel → Unitree API），追加 launch_vel_bridge:=true
-    ros2 launch bringup navigation.launch.py launch_rosbridge:=true launch_vel_bridge:=true
+    # go2_vel_bridge 包存在时自动启动，将 /cmd_vel 转发至 Unitree Go2 实机 API
 ```
 
 > `slam.launch.py` 已完成话题/TF 适配，输出导航栈所需的 `/odom`、`/lidar_points` 与 `map → base_link` TF 链，详见下节。
@@ -170,8 +167,9 @@ ros2 launch bringup slam.launch.py mode:=relocation \
 | `pcd_file` | `bringup/maps/map_nav3d.bt` | 地图文件路径（`.bt` / `.pcd` / `.ot` / `.world` / `.sdf`） |
 | `launch_rviz` | `true` | 是否启动 RViz2 可视化 |
 | `launch_rosbridge` | `false` | 是否启动 rosbridge WebSocket（Web UI 需要） |
-| `launch_vel_bridge` | `false` | 是否启动 go2_vel_bridge（`/cmd_vel` → Unitree Go2 API） |
 | `use_sim_time` | `false` | 使用仿真/GPS 时间 |
+
+> `go2_vel_bridge` 包如存在则自动启动，无需额外参数。
 
 ### 话题与 TF 对齐
 

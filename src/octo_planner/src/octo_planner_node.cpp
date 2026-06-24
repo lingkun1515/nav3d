@@ -109,7 +109,6 @@ private:
     declare_parameter("online_update_period_s", 5.0);
     declare_parameter("online_update_occupied_prob", 0.7);
     declare_parameter("online_update_conservative_mode", false);
-    declare_parameter("online_update_conservative_offset_m", 0.1);
     declare_parameter("online_update_use_raycasting", false);
     declare_parameter("online_update_min_interval_ms", 500);
     declare_parameter("online_update_downsample_step", 1);
@@ -220,7 +219,6 @@ private:
       online_update_period_s_ = get_parameter("online_update_period_s").as_double();
       online_update_occupied_prob_ = get_parameter("online_update_occupied_prob").as_double();
       conservative_mode_ = get_parameter("online_update_conservative_mode").as_bool();
-      conservative_offset_ = get_parameter("online_update_conservative_offset_m").as_double();
       use_raycasting_ = get_parameter("online_update_use_raycasting").as_bool();
       min_interval_ms_ = get_parameter("online_update_min_interval_ms").as_int();
       downsample_step_ = get_parameter("online_update_downsample_step").as_int();
@@ -234,10 +232,10 @@ private:
         [this]() { on_online_reanalyze(); });
 
       RCLCPP_INFO(get_logger(),
-        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s offset=%.3fm interval=%dms downsample=%d",
+        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s interval=%dms downsample=%d",
         online_update_cloud_topic_.c_str(), online_update_period_s_, online_update_occupied_prob_,
         use_raycasting_ ? "on" : "off",
-        conservative_mode_ ? "on" : "off", conservative_offset_,
+        conservative_mode_ ? "on" : "off",
         min_interval_ms_, downsample_step_);
     }
   }
@@ -1016,9 +1014,9 @@ private:
 
     if (use_raycasting_) {
       // Raycasting mode: cast rays from sensor to each point, clearing
-      // free space along rays and marking occupied at endpoints.
-      // When conservative mode is also enabled, push endpoints backward
-      // along the sensor ray before raycasting — inflating obstacle depth.
+      // free space along rays and marking occupied at endpoints. Uses the
+      // ORIGINAL cloud coordinates (no shift) — ray clearing must reflect
+      // where the beam actually travelled.
       octomap::Pointcloud octo_cloud;
       octo_cloud.reserve(static_cast<size_t>(cloud_map.width * cloud_map.height));
 
@@ -1026,28 +1024,11 @@ private:
       sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
       sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
 
-      double offset = get_parameter("online_update_conservative_offset_m").as_double();
-      bool conservative = get_parameter("online_update_conservative_mode").as_bool();
-
       for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
         if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
 
-        double px = *iter_x, py = *iter_y, pz = *iter_z;
-
-        if (conservative && offset > 0.0) {
-          double dx = px - sensor_x;
-          double dy = py - sensor_y;
-          double dz = pz - sensor_z;
-          double len = std::sqrt(dx * dx + dy * dy + dz * dz);
-          if (len > 0.001) {
-            px += dx / len * offset;
-            py += dy / len * offset;
-            pz += dz / len * offset;
-          }
-        }
-
         octo_cloud.push_back(octomap::point3d(
-          static_cast<float>(px), static_cast<float>(py), static_cast<float>(pz)));
+          *iter_x, *iter_y, *iter_z));
       }
 
       if (octo_cloud.size() > 0) {
@@ -1056,8 +1037,8 @@ private:
                            static_cast<float>(sensor_y),
                            static_cast<float>(sensor_z)),
           -1.0, false, false);
-        RCLCPP_DEBUG(get_logger(), "Online update (raycasting): %zu points integrated%s",
-                     octo_cloud.size(), conservative ? " [conservative push]" : "");
+        RCLCPP_DEBUG(get_logger(), "Online update (raycasting): %zu points integrated",
+                     octo_cloud.size());
       }
     } else {
       // Manual updateNode mode — no raycasting, no free-space clearing.
@@ -1070,24 +1051,20 @@ private:
       sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
 
       int count = 0;
-      double offset = get_parameter("online_update_conservative_offset_m").as_double();
       bool conservative = get_parameter("online_update_conservative_mode").as_bool();
+      // Push occupied points DOWN by half a voxel instead of along the sensor
+      // ray — drops the mark to ground/root level so the obstacle occupies the
+      // cell just below where the beam hit.
+      double conservative_dz =
+        conservative ? 0.5 * octree_->getResolution() : 0.0;
 
       for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
         if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
 
         double px = *iter_x, py = *iter_y, pz = *iter_z;
 
-        if (conservative && offset > 0.0) {
-          double dx = px - sensor_x;
-          double dy = py - sensor_y;
-          double dz = pz - sensor_z;
-          double len = std::sqrt(dx * dx + dy * dy + dz * dz);
-          if (len > 0.001) {
-            px += dx / len * offset;
-            py += dy / len * offset;
-            pz += dz / len * offset;
-          }
+        if (conservative) {
+          pz -= conservative_dz;
         }
 
         octree_->updateNode(static_cast<float>(px),
@@ -1164,7 +1141,6 @@ private:
   double online_update_occupied_prob_{0.7};
   std::string online_update_cloud_topic_{"/lidar_points"};
   bool conservative_mode_{false};
-  double conservative_offset_{0.1};
   bool use_raycasting_{false};
   int min_interval_ms_{500};
   int downsample_step_{1};

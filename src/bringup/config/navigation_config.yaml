@@ -70,9 +70,8 @@ octo_planner_node:
     online_update_occupied_prob: 0.7
     # Conservative mode: instead of updating the voxel at the hit point,
     # update the voxel behind along the sensor ray (inflates obstacles)
-    online_update_use_raycasting: false
+    online_update_use_raycasting: true
     online_update_conservative_mode: false
-    online_update_conservative_offset_m: 0.1
     online_update_min_interval_ms: 500
     online_update_downsample_step: 1
 

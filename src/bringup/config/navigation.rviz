@@ -10,6 +10,7 @@ Panels:
         - /LatticePlanner1
         - /LatticePlanner1/LocalPath1/Topic1
         - /Nav2CostmapPlanner1/LocalPath1
+        - /OctoMap1
       Splitter Ratio: 0.5
     Tree Height: 1258
   - Class: rviz_common/Views
@@ -337,10 +338,10 @@ Visualization Manager:
           Min Intensity: 0.25
           Name: CostCloud
           Position Transformer: XYZ
-          Selectable: true
+          Selectable: false
           Size (Pixels): 3
-          Size (m): 0.10000000149011612
-          Style: Flat Squares
+          Size (m): 0.05000000074505806
+          Style: Squares
           Topic:
             Depth: 5
             Durability Policy: Transient Local
@@ -424,25 +425,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 61.993614196777344
+      Distance: 36.44395065307617
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -4.80558967590332
-        Y: 1.9064682722091675
-        Z: -6.259156227111816
+        X: 4.757872104644775
+        Y: -8.128043174743652
+        Z: 0.23919975757598877
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.0847975015640259
+      Pitch: 0.45479655265808105
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 2.7894346714019775
+      Yaw: 2.4625868797302246
     Saved: ~
 Window Geometry:
   Displays:

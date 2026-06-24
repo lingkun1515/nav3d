@@ -91,8 +91,7 @@
 | `online_update_period_s` | double | `60.0` | reanalyze + republish 间隔 (s) |
 | `online_update_occupied_prob` | double | `0.7` | updateNode 的占据概率（对数几率累积） |
 | `online_update_use_raycasting` | bool | `false` | 启用 insertPointCloud 射线追踪：标记占据端点的同时清空射线路径 free space |
-| `online_update_conservative_mode` | bool | `false` | 保守更新模式：沿射线方向将点云端点向后推 `conservative_offset_m` 再标记占据 |
-| `online_update_conservative_offset_m` | double | `0.1` | 保守模式外推距离 (m) |
+| `online_update_conservative_mode` | bool | `false` | 保守更新模式：标记占据时将点 z 下移半个 voxel（落到命中点下一格），仅 updateNode 路径生效；raycasting 清除仍用原始坐标 |
 | `online_update_min_interval_ms` | int | `500` | 两次点云处理的最短间隔 (ms)。0 = 不降频，每帧都处理 |
 | `online_update_downsample_step` | int | `1` | 点云抽稀步长。2 = 隔点采样，3 = 每 3 点取 1。1 = 不抽稀 |
 

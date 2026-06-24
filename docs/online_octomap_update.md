@@ -41,8 +41,7 @@ octo_planner::on_online_reanalyze()
 | `online_update_period_s` | `60.0` | reanalyze + republish 周期 |
 | `online_update_occupied_prob` | `0.7` | updateNode 的占据概率（对数几率累积） |
 | `online_update_use_raycasting` | `false` | 启用 `insertPointCloud` 射线追踪模式：标记占用端点的同时清空传感器到端点之间的 free space |
-| `online_update_conservative_mode` | `false` | 保守更新模式：沿射线方向将点云端点向后推 `conservative_offset_m` 再标记占据 |
-| `online_update_conservative_offset_m` | `0.1` | 保守模式外推距离 (m)。命中点沿射线方向向后推此距离再标记占据 |
+| `online_update_conservative_mode` | `false` | 保守更新模式：标记占据时将点 z 下移半个 voxel（落到命中点下一格），仅在 updateNode 路径生效；raycasting 清除仍用原始坐标 |
 | `online_update_min_interval_ms` | `500` | 两次云处理最短间隔 (ms)。0 = 每帧都处理；500 = 最多 2 Hz |
 | `online_update_downsample_step` | `1` | 点云抽稀步长。2 = 隔 1 取 1；3 = 每 3 点取 1；1 = 不抽稀 |
 
@@ -78,7 +77,7 @@ if (get_parameter("online_update_enabled").as_bool()) {
 **手动模式** (`use_raycasting=false`)：
 1. TF 变换点云到 map 系
 2. 遍历每个点，调用 `octree_->updateNode(x, y, z, log_odds)`
-3. 可选保守外推：沿射线方向将标记位置向后推 `conservative_offset_m`
+3. 可选保守下移：开启时将点 z 减去半个 voxel（标记落到命中点下一格）
 4. `octree_->updateInnerOccupancy()`
 
 ### `on_online_reanalyze()` — 定时重分析
@@ -125,16 +124,16 @@ rclcpp::TimerBase::SharedPtr online_update_timer_;
 | 性能 | O(N) 遍历+updateNode | O(N×R) 射线遍历，R≈射线长度/分辨率 |
 | 保守模式兼容 | ✓ 可选外推 | ✓ 外推后射线追踪（端点后移 → 占据+清空同步后移） |
 
-### 2.5. 保守模式（Ray-behind push）
+### 2.5. 保守模式（Voxel drop）
 
-当 `online_update_conservative_mode=true` 时，对每个命中点沿传感器→命中点方向向后推 `online_update_conservative_offset_m` 米。
+当 `online_update_conservative_mode=true` 时，标记占据格前把命中点 **z 下移半个 voxel**（`0.5 × resolution`），让占据标记落到光束击中点的下一格（更接近地面/障碍物根部）。
 
-- **手动模式**：外推后的位置直接 `updateNode` 标记占据
-- **Raycasting 模式**：外推后的位置作为 `insertPointCloud` 的端点——传感器到外推点之间的空间被清空，外推点标记占据。效果是将整个"占据标记 + free-space 清空"同步后移，实现障碍物深度膨胀
+- **手动模式**：下移后的位置直接 `updateNode` 标记占据
+- **Raycasting 模式**：清除自由空间仍用**原始坐标**（必须反映光束实际经过的位置）；只有占据端点标记时才下移——注意当前实现中 raycasting 分支不做下移，下移仅在 updateNode 路径生效
 
 ```
-正常模式： sensor ──→ [hit at voxel A]   → 标记 voxel A 为占据
-保守模式： sensor ──→ [hit at voxel A] ──offset→ [voxel B] → 标记 voxel B 为占据
+正常模式： [hit at voxel A]           → 标记 voxel A 为占据
+保守模式： [hit at voxel A] ↓½ voxel → 标记 voxel A 下方一格为占据
 ```
 
 ### 3. Reanalyze 周期 60s
