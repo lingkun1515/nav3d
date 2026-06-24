@@ -6,14 +6,10 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /TF1
         - /TF1/Frames1
         - /LatticePlanner1
         - /LatticePlanner1/LocalPath1/Topic1
         - /Nav2CostmapPlanner1/LocalPath1
-        - /WorldCloud1
-        - /OctoMap1
-        - /Axes1
       Splitter Ratio: 0.5
     Tree Height: 1258
   - Class: rviz_common/Views
@@ -176,7 +172,7 @@ Visualization Manager:
           Color: 255; 255; 255
           Color Transformer: FlatColor
           Decay Time: 0
-          Enabled: false
+          Enabled: true
           Invert Rainbow: false
           Max Color: 255; 255; 255
           Max Intensity: 4096
@@ -196,7 +192,7 @@ Visualization Manager:
             Value: /free_paths
           Use Fixed Frame: false
           Use rainbow: false
-          Value: false
+          Value: true
       Enabled: true
       Name: LatticePlanner
     - Class: rviz_common/Group
@@ -262,10 +258,10 @@ Visualization Manager:
       Color: 255; 60; 60
       Color Transformer: Intensity
       Decay Time: 0.5
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 165
+      Max Intensity: 152
       Min Color: 0; 0; 0
       Min Intensity: 0
       Name: WorldCloud
@@ -282,14 +278,14 @@ Visualization Manager:
         Value: /lidar_points
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Class: rviz_common/Group
       Displays:
         - Class: rviz_default_plugins/Marker
           Enabled: true
           Name: TraversableCells
           Namespaces:
-            {}
+            traversable_cells: true
           Topic:
             Depth: 50
             Durability Policy: Transient Local
@@ -298,7 +294,7 @@ Visualization Manager:
             Value: /traversable_cells_markers
           Value: true
         - Class: rviz_default_plugins/Marker
-          Enabled: true
+          Enabled: false
           Name: PreblockedCells
           Namespaces:
             {}
@@ -308,7 +304,7 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /preblocked_cells_markers
-          Value: true
+          Value: false
         - Class: rviz_default_plugins/Marker
           Enabled: false
           Name: OccupiedVoxels
@@ -428,25 +424,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 84.9297103881836
+      Distance: 61.993614196777344
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -8.380505561828613
-        Y: 4.6669745445251465
-        Z: 5.400936126708984
+        X: -4.80558967590332
+        Y: 1.9064682722091675
+        Z: -6.259156227111816
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6947975754737854
+      Pitch: 1.0847975015640259
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 5.654469966888428
+      Yaw: 2.7894346714019775
     Saved: ~
 Window Geometry:
   Displays:

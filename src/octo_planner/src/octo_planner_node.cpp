@@ -105,7 +105,7 @@ private:
     declare_parameter("occupied_cloud_radius", 0.0);
 
     declare_parameter("online_update_enabled", false);
-    declare_parameter("online_update_cloud_topic", "/lidar_points");
+    declare_parameter("online_update_cloud_topic", "/livox/lidar");
     declare_parameter("online_update_period_s", 5.0);
     declare_parameter("online_update_occupied_prob", 0.7);
     declare_parameter("online_update_conservative_mode", false);
@@ -973,6 +973,9 @@ private:
       if (elapsed < min_interval_ms_) return;
     }
     last_cloud_time_ = now;
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 3000,
+      "CALLBACK: pts=%d frame=%s odom=%d",
+      msg->width*msg->height, msg->header.frame_id.c_str(), (int)has_odom_);
 
     std::string map_frame = get_parameter("frame_id").as_string();
     std::string cloud_frame = msg->header.frame_id;
@@ -983,22 +986,32 @@ private:
       return;
     }
 
-    // Transform cloud to map frame; capture sensor origin for conservative push
     sensor_msgs::msg::PointCloud2 cloud_map;
+    if (cloud_frame != map_frame) {
+      try {
+        // Use time=0 (latest available transform) instead of the message
+        // stamp: with rosbag playback the cloud stamp can lag behind the TF
+        // buffer by a few ms, causing "extrapolation into the future" errors
+        // that drop every frame.
+        auto transform = tf_buffer_->lookupTransform(
+          map_frame, cloud_frame, rclcpp::Time(0),
+          rclcpp::Duration::from_seconds(0.1));
+        tf2::doTransform(*msg, cloud_map, transform);
+      } catch (const tf2::TransformException & e) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+          "Online cloud TF failed (%s → %s): %s",
+          cloud_frame.c_str(), map_frame.c_str(), e.what());
+        return;
+      }
+    } else {
+      cloud_map = *msg;
+    }
+
     double sensor_x = 0, sensor_y = 0, sensor_z = 0;
-    try {
-      auto transform = tf_buffer_->lookupTransform(
-        map_frame, cloud_frame, msg->header.stamp,
-        rclcpp::Duration::from_seconds(0.1));
-      tf2::doTransform(*msg, cloud_map, transform);
-      sensor_x = transform.transform.translation.x;
-      sensor_y = transform.transform.translation.y;
-      sensor_z = transform.transform.translation.z;
-    } catch (const tf2::TransformException & e) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-        "Online cloud TF failed (%s → %s): %s",
-        cloud_frame.c_str(), map_frame.c_str(), e.what());
-      return;
+    if (has_odom_) {
+      sensor_x = latest_odom_.pose.pose.position.x;
+      sensor_y = latest_odom_.pose.pose.position.y;
+      sensor_z = latest_odom_.pose.pose.position.z;
     }
 
     if (use_raycasting_) {

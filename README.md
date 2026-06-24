@@ -131,7 +131,7 @@ Dog3DNav 的核心组件基于开源项目集成、组装与改进：
 ros2 launch simulation gazebo.launch.py
 
 # 终端 2 — 导航(仿真已自带 /odom, 不需要 SLAM)
-ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+ros2 launch bringup navigation.launch.py
 ```
 
 ### 实机全流程

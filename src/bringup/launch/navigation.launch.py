@@ -40,7 +40,7 @@ def generate_launch_description():
         default_map = os.path.realpath(default_map)  # resolve install symlink → src/
 
     ld = LaunchDescription([
-        DeclareLaunchArgument('use_sim_time', default_value='true'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument(
             'pcd_file', default_value=default_map,
             description='Map file (.bt/.pcd/.ot/.world/.sdf), default bringup/maps/map_nav3d.bt',
@@ -54,21 +54,16 @@ def generate_launch_description():
     ])
 
     # 1. octo_planner
-    ld.add_action(TimerAction(
-        period=2.0,
-        actions=[
-            Node(
-                package='octo_planner',
-                executable='octo_planner_node',
-                name='octo_planner_node',
-                output='screen',
-                parameters=[
-                    nav_params,
-                    {'pcd_file': pcd_file},
-                    {'use_sim_time': use_sim_time},
-                ],
-            ),
-        ]
+    ld.add_action(Node(
+        package='octo_planner',
+        executable='octo_planner_node',
+        name='octo_planner_node',
+        output='screen',
+        parameters=[
+            nav_params,
+            {'pcd_file': pcd_file},
+            {'use_sim_time': use_sim_time},
+        ],
     ))
 
     # 2. Local planner (selectable via planner:=) + pathFollower
