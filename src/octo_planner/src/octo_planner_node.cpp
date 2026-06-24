@@ -787,7 +787,7 @@ private:
     }
 
     publish_marker_chunked(traversable_marker_pub_, points,
-                           "traversable_cells", res, 0.20f, 0.95f, 0.55f, 0.22f);
+                           "traversable_cells", res, 0.20f, 0.95f, 0.55f, 1.0f);
   }
 
   void publish_preblocked_markers()
@@ -1012,6 +1012,11 @@ private:
       sensor_z = latest_odom_.pose.pose.position.z;
     }
 
+    // ---- integrate into octree (serialised with reanalyze to prevent
+    //       concurrent tree modification during leaf iteration) ----
+    {
+      std::lock_guard<std::mutex> lock(planning_mutex_);
+
     if (use_raycasting_) {
       // Raycasting mode: cast rays from sensor to each point, clearing
       // free space along rays and marking occupied at endpoints. Uses the
@@ -1079,6 +1084,7 @@ private:
                      count, log_odds);
       }
     }
+    }  // planning_mutex_ scope
   }
 
   void on_online_reanalyze()
