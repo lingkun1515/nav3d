@@ -22,6 +22,7 @@
 
     # ---- 激光雷达 ----
     lio.sensor.lidar_type: 1            # LIVOX (PointCloud2 + CustomMsg 双订阅)
+    lio.sensor.msg_type: 2              # 2=PointCloud2 only (当前rosbag格式)
     lio.sensor.blind: 2.0               # 盲区 2m
     lio.sensor.maxrange: 60.0           # 最大 60m
     lio.sensor.filter_rate: 3           # 点云降采样 (每 3 点取 1)
