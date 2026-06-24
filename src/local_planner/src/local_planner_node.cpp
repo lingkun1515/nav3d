@@ -1224,46 +1224,50 @@ private:
         path.header.frame_id = "base_link";
         pub_path_->publish(path);
 
-        // Free paths visualization
-        freePaths_->clear();
-        for (int i = 0; i < 36 * PATH_NUM; i++) {
-          int rDir = i / PATH_NUM;
-          float rAng = (10.0f * rDir - 180.0f) * PI / 180.0f;
-          float rDeg = 10.0f * rDir;
-          if (rDeg > 180.0f) rDeg -= 360.0f;
+	        // Free paths visualization — publish in map frame to avoid pitch/roll tilt
+	        freePaths_->clear();
+	        float cosYaw = std::cos(vehicleYaw_);
+	        float sinYaw = std::sin(vehicleYaw_);
+	        for (int i = 0; i < 36 * PATH_NUM; i++) {
+	          int rDir = i / PATH_NUM;
+	          float rAng = (10.0f * rDir - 180.0f) * PI / 180.0f;
+	          float rDeg = 10.0f * rDir;
+	          if (rDeg > 180.0f) rDeg -= 360.0f;
 
-          float angDiff = std::abs(joyDir - (10.0f * rDir - 180.0f));
-          if (angDiff > 180.0f) angDiff = 360.0f - angDiff;
+	          float angDiff = std::abs(joyDir - (10.0f * rDir - 180.0f));
+	          if (angDiff > 180.0f) angDiff = 360.0f - angDiff;
 
-          if ((angDiff > dirThre_ && !dirToVehicle_) ||
-              (std::abs(10.0f * rDir - 180.0f) > dirThre_ && std::abs(joyDir) <= 90.0f && dirToVehicle_) ||
-              ((10.0f * rDir > dirThre_ && 360.0f - 10.0f * rDir > dirThre_) && std::abs(joyDir) > 90.0f && dirToVehicle_) ||
-              !((rAng * 180.0f / PI > minObsAngCW && rAng * 180.0f / PI < minObsAngCCW) ||
-                (rDeg > minObsAngCW && rDeg < minObsAngCCW && twoWayDrive_) || !checkRotObstacle_)) {
-            continue;
-          }
+	          if ((angDiff > dirThre_ && !dirToVehicle_) ||
+	              (std::abs(10.0f * rDir - 180.0f) > dirThre_ && std::abs(joyDir) <= 90.0f && dirToVehicle_) ||
+	              ((10.0f * rDir > dirThre_ && 360.0f - 10.0f * rDir > dirThre_) && std::abs(joyDir) > 90.0f && dirToVehicle_) ||
+	              !((rAng * 180.0f / PI > minObsAngCW && rAng * 180.0f / PI < minObsAngCCW) ||
+	                (rDeg > minObsAngCW && rDeg < minObsAngCCW && twoWayDrive_) || !checkRotObstacle_)) {
+	            continue;
+	          }
 
-          if (clearPathList_[i] < pointPerPathThre_) {
-            for (const auto & pt : paths_[i % PATH_NUM]->points) {
-              float dis = std::sqrt(pt.x * pt.x + pt.y * pt.y);
-              if (dis <= pathRange / pathScale_ &&
-                  (dis <= (relativeGoalDis + goalClearRange_) / pathScale_ || !pathCropByGoal_)) {
-                pcl::PointXYZI point;
-                point.x = pathScale_ * (std::cos(rAng) * pt.x - std::sin(rAng) * pt.y);
-                point.y = pathScale_ * (std::sin(rAng) * pt.x + std::cos(rAng) * pt.y);
-                point.z = pathScale_ * pt.z;
-                point.intensity = 1.0f;
-                freePaths_->push_back(point);
-              }
-            }
-          }
-        }
+	          if (clearPathList_[i] < pointPerPathThre_) {
+	            for (const auto & pt : paths_[i % PATH_NUM]->points) {
+	              float dis = std::sqrt(pt.x * pt.x + pt.y * pt.y);
+	              if (dis <= pathRange / pathScale_ &&
+	                  (dis <= (relativeGoalDis + goalClearRange_) / pathScale_ || !pathCropByGoal_)) {
+	                float lx = pathScale_ * (std::cos(rAng) * pt.x - std::sin(rAng) * pt.y);
+	                float ly = pathScale_ * (std::sin(rAng) * pt.x + std::cos(rAng) * pt.y);
+	                freePaths_->push_back({});
+	                auto& p = freePaths_->back();
+	                p.x = vehicleX_ + cosYaw * lx - sinYaw * ly;
+	                p.y = vehicleY_ + sinYaw * lx + cosYaw * ly;
+	                p.z = 0.0f;
+	                p.intensity = 1.0f;
+	              }
+	            }
+	          }
+	        }
 
-        sensor_msgs::msg::PointCloud2 freePaths2;
-        pcl::toROSMsg(*freePaths_, freePaths2);
-        freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        freePaths2.header.frame_id = "base_link";
-        pub_free_paths_->publish(freePaths2);
+	        sensor_msgs::msg::PointCloud2 freePaths2;
+	        pcl::toROSMsg(*freePaths_, freePaths2);
+	        freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+	        freePaths2.header.frame_id = "map";
+	        pub_free_paths_->publish(freePaths2);
 
         pathFound = true;
         break;
@@ -1291,12 +1295,12 @@ private:
       path.header.frame_id = "base_link";
       pub_path_->publish(path);
 
-      freePaths_->clear();
-      sensor_msgs::msg::PointCloud2 freePaths2;
-      pcl::toROSMsg(*freePaths_, freePaths2);
-      freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-      freePaths2.header.frame_id = "base_link";
-      pub_free_paths_->publish(freePaths2);
+	      freePaths_->clear();
+	      sensor_msgs::msg::PointCloud2 freePaths2;
+	      pcl::toROSMsg(*freePaths_, freePaths2);
+	      freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+	      freePaths2.header.frame_id = "map";
+	      pub_free_paths_->publish(freePaths2);
     }
 
     // Publish whether robot is near a trusted corridor (for pathFollower tilt adapt)
