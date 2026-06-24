@@ -146,8 +146,10 @@ ros2 launch bringup slam.launch.py mode:=mapping
 ros2 launch bringup slam.launch.py mode:=relocation \
     init_pose:="[x, y, z, roll, pitch, yaw]"
 
-# 终端 3 — 导航
-ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+    # 终端 3 — 导航
+    ros2 launch bringup navigation.launch.py launch_rosbridge:=true
+    # 如需直接控制 Go2（cmd_vel → Unitree API），追加 launch_vel_bridge:=true
+    ros2 launch bringup navigation.launch.py launch_rosbridge:=true launch_vel_bridge:=true
 ```
 
 > `slam.launch.py` 已完成话题/TF 适配，输出导航栈所需的 `/odom`、`/lidar_points` 与 `map → base_link` TF 链，详见下节。
@@ -160,6 +162,16 @@ ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 | `rviz` | `false` | 是否启动 RViz2 可视化 |
 | `use_sim_time` | `true` | 使用仿真/GPS 时间 |
 | `init_pose` | `[0,0,0,0,0,0]` | 重定位初值 `[x,y,z,roll,pitch,yaw]` |
+
+### Navigation launch 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `pcd_file` | `bringup/maps/map_nav3d.bt` | 地图文件路径（`.bt` / `.pcd` / `.ot` / `.world` / `.sdf`） |
+| `launch_rviz` | `true` | 是否启动 RViz2 可视化 |
+| `launch_rosbridge` | `false` | 是否启动 rosbridge WebSocket（Web UI 需要） |
+| `launch_vel_bridge` | `false` | 是否启动 go2_vel_bridge（`/cmd_vel` → Unitree Go2 API） |
+| `use_sim_time` | `false` | 使用仿真/GPS 时间 |
 
 ### 话题与 TF 对齐
 
