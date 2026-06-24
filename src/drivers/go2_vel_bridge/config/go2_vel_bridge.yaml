@@ -1,0 +1,23 @@
+go2_vel_bridge:
+  ros__parameters:
+    cmd_vel_topic: "/cmd_vel"
+    cmd_out_topic: "/go2_vel_bridge/cmd_out"
+    sport_request_topic: "/api/sport/request"
+    max_vx: 0.6
+    max_vy: 0.0
+    max_vyaw: 1.2
+    cmd_vel_timeout: 1.0
+    publish_rate: 50.0
+    stop_mode: "zero_velocity"
+    max_linear_accel: 1.5
+    max_angular_accel: 3.0
+    # Stationary turn only (vx~0): boost RPP dead-zone vyaw (~0.12).
+    stationary_min_vyaw: 0.35
+    stationary_vyaw_gain: 4.0
+    stationary_boost_max_in: 0.25
+    stationary_linear_threshold: 0.05
+    # Forward (vx>=threshold): zero |vyaw| below deadband to avoid left-right weave.
+    forward_linear_threshold: 0.15
+    forward_angular_deadband: 0.12
+    turn_intent_threshold: 0.01
+    invert_angular_z: false
