@@ -204,7 +204,7 @@ private:
         std::chrono::duration<double>(replan_period_),
         [this]() {
           if (map_ready_ && has_goal_) {
-            RCLCPP_INFO(get_logger(), "Timer re-plan (period=%.1fs)", replan_period_);
+            RCLCPP_DEBUG(get_logger(), "Timer re-plan (period=%.1fs)", replan_period_);
             start_planning(false);  // don't clear path, just replace atomically
           }
         });
@@ -593,7 +593,7 @@ private:
     }
     planning_cv_.notify_one();
 
-    RCLCPP_INFO(get_logger(), "Planning request dispatched (non-blocking).");
+    RCLCPP_DEBUG(get_logger(), "Planning request dispatched (non-blocking).");
   }
 
   void planning_worker_loop()
@@ -627,7 +627,7 @@ private:
 
       global_planner::PointPose goal = goal_point_;
 
-      RCLCPP_INFO(get_logger(), "Worker: planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)%s",
+      RCLCPP_DEBUG(get_logger(), "Worker: planning from (%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f)%s",
                   start.x, start.y, start.z,
                   goal.x, goal.y, goal.z,
                   has_explicit_start_ ? "" : " [from odom]");

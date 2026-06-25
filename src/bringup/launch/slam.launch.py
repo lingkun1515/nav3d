@@ -61,7 +61,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='map_to_odom_tf',
         arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
-        # parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{'use_sim_time': use_sim_time}],
     ))
     ld.add_action(Node(
         package='tf2_ros',
@@ -69,7 +69,7 @@ def generate_launch_description():
         name='static_tf_livox_to_base_link',
         arguments=['-0.13', '0', '0.0', '0', '-0.261799', '0',
                    'livox_frame', 'base_link'],
-        # parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{'use_sim_time': use_sim_time}],
     ))
 
     # ---- SLAM 节点 ----

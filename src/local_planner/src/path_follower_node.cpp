@@ -174,7 +174,7 @@ private:
 
   void odometry_callback(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
   {
-    odom_time_ = rclcpp::Time(odom->header.stamp).seconds();
+    odom_time_ = now().seconds();
     double roll, pitch, yaw;
     geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
     tf2::Matrix3x3(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w)).getRPY(roll, pitch, yaw);
@@ -190,13 +190,13 @@ private:
       double effective_thre = incl_thre_;
       if (std::abs(roll) > effective_thre * PI / 180.0 ||
           std::abs(pitch) > effective_thre * PI / 180.0) {
-        stop_init_time_ = rclcpp::Time(odom->header.stamp).seconds();
+        stop_init_time_ = now().seconds();
       }
     }
 
     if ((std::abs(odom->twist.twist.angular.x) > incl_rate_thre_ * PI / 180.0 ||
          std::abs(odom->twist.twist.angular.y) > incl_rate_thre_ * PI / 180.0) && use_incl_rate_to_slow_) {
-      slow_init_time_ = rclcpp::Time(odom->header.stamp).seconds();
+      slow_init_time_ = now().seconds();
     }
   }
 

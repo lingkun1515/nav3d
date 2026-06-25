@@ -147,7 +147,7 @@ namespace global_planner
         goal_point_ = goal;
         has_goal_ = true;
 
-        printf("start = (%f,%f,%f),goal = (%f,%f,%f) \n",start_point_.x,start_point_.y,start_point_.z,goal_point_.x,goal_point_.y,goal_point_.z);
+        // printf("start = (%f,%f,%f),goal = (%f,%f,%f) \n",start_point_.x,start_point_.y,start_point_.z,goal_point_.x,goal_point_.y,goal_point_.z);
          
         tryPlan();
 
@@ -155,7 +155,7 @@ namespace global_planner
 
     void GlobalPlanner::tryPlan()
     {
-        printf("GlobalPlanner::tryPlan planning...\n");
+        // printf("GlobalPlanner::tryPlan planning...\n");
         if (!map_ready_ || !has_start_ || !has_goal_ || planning_in_progress_) 
         {
             printf("GlobalPlanner::tryPlan 异常退出规划器\n");
@@ -221,13 +221,13 @@ namespace global_planner
         if (!(start == start_raw)) 
         {
             const auto p = gridToWorld(start);
-            printf("GlobalPlanner::startPlan() Start snapped to free cell: [%.2f, %.2f, %.2f] \n",p.x(), p.y(), p.z());
+            // printf("GlobalPlanner::startPlan() Start snapped to free cell: [%.2f, %.2f, %.2f] \n",p.x(), p.y(), p.z());
         }
 
         if (!(goal == goal_raw))
         {
             const auto p = gridToWorld(goal);
-            printf("GlobalPlanner::startPlan() Goal snapped to free cell: [%.2f, %.2f, %.2f] \n",p.x(), p.y(), p.z());
+            // printf("GlobalPlanner::startPlan() Goal snapped to free cell: [%.2f, %.2f, %.2f] \n",p.x(), p.y(), p.z());
         }
 
         std::priority_queue<QueueNode, std::vector<QueueNode>, QueueNodeCompare> open_set;
@@ -255,7 +255,7 @@ namespace global_planner
 
             if (current.idx == goal) {
                 const auto cells = reconstructPath(came_from, current.idx);
-                printf("GlobalPlanner::startPlan() A* path found in %d iterations. waypoints=%zu \n", iters, cells.size());
+                // printf("GlobalPlanner::startPlan() A* path found in %d iterations. waypoints=%zu \n", iters, cells.size());
                 planner_results_.clear();
                 for (std::size_t i = 0; i < cells.size(); ++i) 
                 {
@@ -522,7 +522,7 @@ namespace global_planner
             preblocked_cells_.insert(c);
         }
         }
-        printf("Preprocess mask rebuilt. preblocked_cells=%zu external=%zu \n",preblocked_cells_.size(), external_preblocked_cells_.size());
+        // printf("Preprocess mask rebuilt. preblocked_cells=%zu external=%zu \n",preblocked_cells_.size(), external_preblocked_cells_.size());
         // publishPreblockedCellsMarker();
     }
 
@@ -597,8 +597,8 @@ namespace global_planner
         // Per-(x,y) set for lowest_traversable_only fast-path
         std::unordered_set<uint64_t> columns_done;
 
-        printf("rebuildDerivedLayers: scanning %zu occupied cells (xy_radius=%d, z_depth=%d)...\n",
-               occupied_set_.size(), max_xy_cand, max_dz_cand);
+        // printf("rebuildDerivedLayers: scanning %zu occupied cells (xy_radius=%d, z_depth=%d)...\n",
+        //        occupied_set_.size(), max_xy_cand, max_dz_cand);
 
         for (const auto & occ : occupied_set_) {
             for (int dx = -max_xy_cand; dx <= max_xy_cand; ++dx) {
@@ -634,8 +634,8 @@ namespace global_planner
             }
         }
 
-        printf("Traversable cells rebuilt: %zu cells (lowest_only=%d)\n",
-               traversable_cells_.size(), lowest_traversable_only ? 1 : 0);
+        // printf("Traversable cells rebuilt: %zu cells (lowest_only=%d)\n",
+        //        traversable_cells_.size(), lowest_traversable_only ? 1 : 0);
     }
 
     bool GlobalPlanner::isInsideMetricBounds(const GridIndex & idx) const
@@ -726,7 +726,7 @@ namespace global_planner
         // get_logger(),
         // "Preblocked costmap rebuilt. cells=%zu radius=%d",
         // preblocked_costmap_.size(), radius_cells);
-        printf("Preblocked costmap rebuilt. cells=%zu radius=%d \n",preblocked_costmap_.size(),radius_cells);
+        // printf("Preblocked costmap rebuilt. cells=%zu radius=%d \n",preblocked_costmap_.size(),radius_cells);
         // publishRiskCostCloud();
     }
 
@@ -771,11 +771,11 @@ namespace global_planner
             components.push_back(std::move(comp));
         }
 
-        printf("RadicalInfill: %zu components from %zu traversable cells.\n",
-               components.size(), traversable_cells_.size());
+        // printf("RadicalInfill: %zu components from %zu traversable cells.\n",
+        //        components.size(), traversable_cells_.size());
 
         if (components.size() < 2) {
-            printf("RadicalInfill: nothing to bridge.\n");
+            // printf("RadicalInfill: nothing to bridge.\n");
             return;
         }
 
@@ -866,8 +866,8 @@ namespace global_planner
             }
         }
 
-        printf("RadicalInfill: %zu components, filled %zu cells.\n",
-               components.size(), filled.size());
+        // printf("RadicalInfill: %zu components, filled %zu cells.\n",
+        //        components.size(), filled.size());
         traversable_cells_.insert(filled.begin(), filled.end());
     }
 
@@ -923,8 +923,8 @@ namespace global_planner
             }
         }
 
-        printf("FlattenTraversable: adjusted %zu / %zu columns (window=%d, max_delta=%d)\n",
-               adjustments.size(), height_map.size(), window, max_delta);
+        // printf("FlattenTraversable: adjusted %zu / %zu columns (window=%d, max_delta=%d)\n",
+        //        adjustments.size(), height_map.size(), window, max_delta);
     }
 
 }
