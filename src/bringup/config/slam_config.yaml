@@ -18,7 +18,7 @@
     lio.ros.imu_topic: "/livox/imu"
 
     # ---- 全局坐标系 (导航栈统一使用 map) ----
-    lio.global.frame_id: "map"
+    lio.global.frame_id: "odom"
     lio.global.imu_frame: "livox_frame"   # IMU 与雷达重合, TF 直接 pub map→livox_frame
 
     # ---- 激光雷达 ----
