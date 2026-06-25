@@ -866,8 +866,7 @@ private:
 
     if (autonomyMode_) {
       if (!has_goal_) {
-        relativeGoalDis = 0;
-        joyDir = 0;
+        return;  // no goal yet — skip path search, don't publish zero path
       } else {
         float relativeGoalX = ((goalX_ - vehicleX_) * cosYaw + (goalY_ - vehicleY_) * sinYaw);
         float relativeGoalY = (-(goalX_ - vehicleX_) * sinYaw + (goalY_ - vehicleY_) * cosYaw);
