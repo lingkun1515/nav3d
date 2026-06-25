@@ -7,6 +7,6 @@
 ROSBRIDGE="${1:-true}"
 RVIZ="${2:-true}"
 
-CMD="source /opt/ros/foxy/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch bringup navigation.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ"
+CMD="source ~/.bashrc && ros2 launch bringup navigation.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ"
 
-docker exec -it dog3dnav-foxy bash -c "$CMD"
+docker exec -it dog3dnav-foxy bash -i -c "$CMD"

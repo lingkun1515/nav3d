@@ -7,7 +7,7 @@
 WORLD="${1:-}"
 MODEL="${2:-a1}"
 
-CMD="source /opt/ros/foxy/setup.bash && source /ros2_ws/install/setup.bash"
+CMD="source ~/.bashrc"
 
 if [ -n "$WORLD" ]; then
   CMD="$CMD && ros2 launch simulation gazebo.launch.py world:=\$(ros2 pkg prefix simulation)/share/simulation/worlds/$WORLD robot_model:=$MODEL"
@@ -15,4 +15,4 @@ else
   CMD="$CMD && ros2 launch simulation gazebo.launch.py robot_model:=$MODEL"
 fi
 
-docker exec -it dog3dnav-foxy bash -c "$CMD"
+docker exec -it dog3dnav-foxy bash -i -c "$CMD"

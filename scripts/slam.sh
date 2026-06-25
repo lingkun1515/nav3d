@@ -6,6 +6,6 @@
 
 MODE="${1:-mapping}"
 
-CMD="source /opt/ros/foxy/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch bringup slam.launch.py mode:=$MODE"
+CMD="source ~/.bashrc && ros2 launch bringup slam.launch.py mode:=$MODE"
 
-docker exec -it dog3dnav-foxy bash -c "$CMD"
+docker exec -it dog3dnav-foxy bash -i -c "$CMD"
