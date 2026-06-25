@@ -936,75 +936,83 @@ private:
     {
       std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
 
-    if (use_raycasting_) {
-      // Raycasting mode: cast rays from sensor to each point, clearing
-      // free space along rays and marking occupied at endpoints. Uses the
-      // ORIGINAL cloud coordinates (no shift) — ray clearing must reflect
-      // where the beam actually travelled.
-      octomap::Pointcloud octo_cloud;
-      octo_cloud.reserve(static_cast<size_t>(cloud_map.width * cloud_map.height));
+      // === Phase 1: Ray clearing (raycasting mode only) ===
+      // Cast rays from sensor to ALL points and clear free space along
+      // every ray.  Endpoints are NOT touched here — occupation is
+      // handled separately in Phase 2 (in-range only).
+      if (use_raycasting_) {
+        float miss_log = static_cast<float>(
+          std::log(octree_->getProbMiss() / (1.0 - octree_->getProbMiss())));
 
-      sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
-      sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
-      sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
+        octomap::point3d origin(static_cast<float>(sensor_x),
+                                static_cast<float>(sensor_y),
+                                static_cast<float>(sensor_z));
 
-      for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
-        if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
 
-        octo_cloud.push_back(octomap::point3d(
-          *iter_x, *iter_y, *iter_z));
-      }
+        octomap::KeyRay ray;
+        int ray_count = 0;
+        for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
+          if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
 
-      if (octo_cloud.size() > 0) {
-        octree_->insertPointCloud(octo_cloud,
-          octomap::point3d(static_cast<float>(sensor_x),
-                           static_cast<float>(sensor_y),
-                           static_cast<float>(sensor_z)),
-          -1.0, false, false);
-        RCLCPP_DEBUG(get_logger(), "Online update (raycasting): %zu points integrated",
-                     octo_cloud.size());
-      }
-    } else {
-      // Manual updateNode mode — no raycasting, no free-space clearing.
-      // Supports conservative ray-behind push.
-      double prob = get_parameter("online_update_occupied_prob").as_double();
-      float log_odds = static_cast<float>(std::log(prob / (1.0 - prob)));
+          if (!octree_->computeRayKeys(origin,
+                octomap::point3d(*iter_x, *iter_y, *iter_z), ray))
+            continue;
 
-      sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
-      sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
-      sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
-
-      int count = 0;
-      bool conservative = get_parameter("online_update_conservative_mode").as_bool();
-      // Push occupied points DOWN by half a voxel instead of along the sensor
-      // ray — drops the mark to ground/root level so the obstacle occupies the
-      // cell just below where the beam hit.
-      double conservative_dz =
-        conservative ? 0.5 * octree_->getResolution() : 0.0;
-
-      for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
-        if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
-
-        double px = *iter_x, py = *iter_y, pz = *iter_z;
-
-        if (!point_in_range(px, py, pz, sensor_x, sensor_y, sensor_z)) continue;
-
-        if (conservative) {
-          pz -= conservative_dz;
+          for (const auto& key : ray)
+            octree_->updateNode(key, miss_log);
+          ray_count++;
         }
 
-        octree_->updateNode(static_cast<float>(px),
-                            static_cast<float>(py),
-                            static_cast<float>(pz), log_odds);
-        count++;
+        RCLCPP_DEBUG(get_logger(),
+          "Online ray-clearing: %d rays cast", ray_count);
       }
 
-      if (count > 0) {
-        octree_->updateInnerOccupancy();
-        RCLCPP_DEBUG(get_logger(), "Online update: %d points integrated (log_odds=%.3f)",
-                     count, log_odds);
+      // === Phase 2: Occupancy marking (both modes, in-range only) ===
+      {
+        double prob = get_parameter("online_update_occupied_prob").as_double();
+        float log_odds = static_cast<float>(std::log(prob / (1.0 - prob)));
+        bool conservative = get_parameter("online_update_conservative_mode").as_bool();
+        double conservative_dz =
+          conservative ? 0.5 * octree_->getResolution() : 0.0;
+
+        sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");
+        sensor_msgs::PointCloud2ConstIterator<float> iter_z(cloud_map, "z");
+
+        int count = 0, total = 0, filtered_z_above = 0, filtered_xy = 0, filtered_z_below = 0;
+        for (int i = 0; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++i) {
+          if (downsample_step_ > 1 && i % downsample_step_ != 0) continue;
+          total++;
+
+          double px = *iter_x, py = *iter_y, pz = *iter_z;
+
+          double dz = pz - sensor_z;
+          if (max_z_above_ > 0.0 && dz > max_z_above_) { filtered_z_above++; continue; }
+          if (max_z_below_ > 0.0 && -dz > max_z_below_) { filtered_z_below++; continue; }
+          double dx = px - sensor_x, dy = py - sensor_y;
+          if (max_xy_distance_ > 0.0 && (dx * dx + dy * dy) > max_xy_distance_ * max_xy_distance_)
+            { filtered_xy++; continue; }
+
+          if (conservative)
+            pz -= conservative_dz;
+
+          octree_->updateNode(static_cast<float>(px),
+                              static_cast<float>(py),
+                              static_cast<float>(pz), log_odds);
+          count++;
+        }
+
+        if (count > 0) {
+          octree_->updateInnerOccupancy();
+        }
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000,
+          "Online occupancy: %d/%d occupied (filtered: %d z_above %.1f, %d z_below %.1f, %d xy %.1f) sensor_z=%.2f",
+          count, total, filtered_z_above, max_z_above_, filtered_z_below, max_z_below_,
+          filtered_xy, max_xy_distance_, sensor_z);
       }
-    }
     }  // planning_mutex_ scope
   }
 
