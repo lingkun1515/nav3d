@@ -114,6 +114,12 @@ public:
 
   void reanalyze();
 
+  /// Rebuild derived layers from a pre-built occupied-cell snapshot.
+  /// Caller must have built occupied_set from octree leaves (under octree
+  /// lock) and passes it here.  This method only touches derived data.
+  void rebuildFromSnapshot(
+      const std::unordered_set<GridIndex, GridIndexHash>& occupied_set);
+
   void setCancelFlag(std::atomic<bool>* flag) { cancel_flag_ = flag; }
 
   void makePlan(const PointPose start,const PointPose goal);
@@ -267,6 +273,7 @@ private:
   std::shared_ptr<octomap::OcTree> octree_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
+  std::unordered_set<GridIndex, GridIndexHash> occupied_set_;
   std::unordered_set<GridIndex, GridIndexHash> preblocked_cells_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
   std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;

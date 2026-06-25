@@ -415,6 +415,7 @@ private:
   void on_add_voxels(sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
     if (!octree_ || !map_ready_) return;
+    std::lock_guard<std::mutex> lock(octree_mutex_);
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
     sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
     sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
@@ -433,6 +434,7 @@ private:
   void on_remove_voxels(sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
     if (!octree_ || !map_ready_) return;
+    std::lock_guard<std::mutex> lock(octree_mutex_);
     sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x");
     sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
     sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
@@ -458,11 +460,11 @@ private:
 
   void configure_planner()
   {
-    // Cancel any running planning, then wait for worker to release the planner
+    // Cancel any running planning, then wait for worker to release derived_mutex_
     cancel_planning_ = true;
     {
-      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
-      // Worker releases mutex when A* exits (cancel flag checked every iteration)
+      std::lock_guard<std::mutex> lock(derived_mutex_);
+      // Worker releases derived_mutex_ when A* exits (cancel flag checked every iteration)
     }
     cancel_planning_ = false;
 
@@ -492,20 +494,27 @@ private:
     planner_cfg.flatten_window_cells = get_parameter("flatten_window_cells").as_int();
     planner_cfg.flatten_max_delta_cells = get_parameter("flatten_max_delta_cells").as_int();
 
-    planner_ = std::make_unique<global_planner::GlobalPlanner>();
-    planner_->configure(planner_cfg);
-    planner_->setOctomap(octree_);
+    // Hold both locks while replacing the octree + planner and rebuilding derived.
+    // (One-time operation at startup or on explicit map reload — seconds on large maps.)
+    {
+      std::lock_guard<std::mutex> olock(octree_mutex_);
+      std::lock_guard<std::mutex> dlock(derived_mutex_);
 
-    map_ready_ = true;
-    has_explicit_start_ = false;
-    has_odom_ = false;
-    has_goal_ = false;
+      planner_ = std::make_unique<global_planner::GlobalPlanner>();
+      planner_->configure(planner_cfg);
+      planner_->setOctomap(octree_);
 
-    publish_octomap();
-    publish_occupied_markers();
-    publish_traversable_markers();
-    publish_preblocked_markers();
-    publish_risk_cost_cloud();
+      map_ready_ = true;
+      has_explicit_start_ = false;
+      has_odom_ = false;
+      has_goal_ = false;
+
+      publish_octomap();
+      publish_occupied_markers();
+      publish_traversable_markers();
+      publish_preblocked_markers();
+      publish_risk_cost_cloud();
+    }
 
     RCLCPP_INFO(get_logger(), "Map loaded and published. Ready for planning.");
   }
@@ -627,7 +636,7 @@ private:
 
       std::vector<global_planner::PointPose> results;
       {
-        std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
+        std::lock_guard<std::mutex> lock(derived_mutex_);
         if (cancel_planning_.load()) continue;
 
         planner_->setCancelFlag(&cancel_planning_);
@@ -933,10 +942,10 @@ private:
       sensor_z = latest_odom_.pose.pose.position.z;
     }
 
-    // ---- integrate into octree (serialised with reanalyze to prevent
-    //       concurrent tree modification during leaf iteration) ----
+    // ---- integrate into octree (only needs octree_mutex_ to protect tree writes;
+    //       A* reads use occupied_set_ snapshot, no conflict) ----
     {
-      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
+      std::lock_guard<std::mutex> lock(octree_mutex_);
 
       // === Phase 1: Ray clearing (raycasting mode only) ===
       // Cast rays from sensor to ALL points and clear free space along
@@ -1021,20 +1030,56 @@ private:
           count, total, filtered_z_above, max_z_above_, filtered_z_below, max_z_below_,
           filtered_xy, max_xy_distance_, sensor_z);
       }
-    }  // planning_mutex_ scope
+    }  // octree_mutex_ scope
+  }
+
+  auto build_occupied_snapshot()
+  {
+    std::unordered_set<global_planner::GridIndex, global_planner::GridIndexHash> snapshot;
+    {
+      std::lock_guard<std::mutex> lock(octree_mutex_);
+      if (!octree_) return snapshot;
+      const double res = octree_->getResolution();
+      for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+        if (octree_->isNodeOccupied(*it)) {
+          snapshot.insert(global_planner::GridIndex{
+            static_cast<int>(std::floor(it.getX() / res)),
+            static_cast<int>(std::floor(it.getY() / res)),
+            static_cast<int>(std::floor(it.getZ() / res))});
+        }
+      }
+    }
+    return snapshot;
   }
 
   void on_online_reanalyze()
   {
     if (!map_ready_) return;
-    // Run in background to avoid blocking the spin thread for seconds
-    // on large maps.  Serialised with planning via planning_mutex_.
+    // Three-phase reanalyze to minimise lock contention:
+    //   A) snapshot octree under octree_mutex_  (milliseconds)
+    //   B) rebuild derived under derived_mutex_  (seconds, large maps)
+    //   C) republish under both locks            (milliseconds)
     std::thread([this]() {
-      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
-      if (!map_ready_) return;
-      RCLCPP_INFO(get_logger(), "Online reanalyze triggered (background)...");
-      planner_->reanalyze();
-      republish_all();
+      if (!map_ready_ || !octree_) return;
+
+      // Phase A: snapshot occupied cells (only blocks online cloud briefly)
+      auto snapshot = build_occupied_snapshot();
+
+      // Phase B: rebuild derived layers (only blocks A* — online cloud runs free)
+      {
+        std::lock_guard<std::mutex> lock(derived_mutex_);
+        if (!map_ready_) return;
+        RCLCPP_INFO(get_logger(), "Online reanalyze (background): rebuilding derived layers...");
+        planner_->rebuildFromSnapshot(snapshot);
+      }
+
+      // Phase C: republish (read-only, lock order: octree → derived)
+      {
+        std::lock_guard<std::mutex> olock(octree_mutex_);
+        std::lock_guard<std::mutex> dlock(derived_mutex_);
+        republish_all();
+        RCLCPP_INFO(get_logger(), "Online reanalyze complete.");
+      }
     }).detach();
   }
 
@@ -1094,7 +1139,8 @@ private:
 
   // Persistent background worker — spin thread is never blocked
   std::thread worker_thread_;
-  std::recursive_mutex planning_mutex_;  // recursive: republish_all may be called while lock already held by reanalyze
+  std::mutex octree_mutex_;      // protects octree_ (online cloud write, reanalyze snapshot read)
+  std::mutex derived_mutex_;     // protects derived layers: occupied_set_, traversable, preblocked, costmap
   std::atomic<bool> cancel_planning_{false};
   std::condition_variable planning_cv_;
   std::mutex planning_cv_mutex_;

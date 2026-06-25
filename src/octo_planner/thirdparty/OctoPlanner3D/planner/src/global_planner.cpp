@@ -82,6 +82,30 @@ namespace global_planner
 
         octree_ = map;
         map_ready_ = true;
+
+        // Build occupied snapshot (cached for A*, avoids octree access during search)
+        occupied_set_.clear();
+        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+            if (octree_->isNodeOccupied(*it))
+                occupied_set_.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
+        }
+
+        rebuildPreblockedCells();
+        rebuildDerivedLayers();
+        if (radical_infill_enabled_) {
+          radicalInfill();
+        }
+        if (flatten_enabled_) {
+          flattenTraversable();
+        }
+        rebuildPreblockedCostmap();
+    }
+
+    void GlobalPlanner::rebuildFromSnapshot(
+        const std::unordered_set<GridIndex, GridIndexHash>& occupied_set)
+    {
+        if (!octree_) return;
+        occupied_set_ = occupied_set;
         rebuildPreblockedCells();
         rebuildDerivedLayers();
         if (radical_infill_enabled_) {
@@ -96,6 +120,14 @@ namespace global_planner
     void GlobalPlanner::reanalyze()
     {
         if (!octree_ || !map_ready_) return;
+
+        // Build occupied snapshot from octree (needed by rebuild* functions below)
+        occupied_set_.clear();
+        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+            if (octree_->isNodeOccupied(*it))
+                occupied_set_.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
+        }
+
         rebuildPreblockedCells();
         rebuildDerivedLayers();
         if (radical_infill_enabled_) {
@@ -406,8 +438,7 @@ namespace global_planner
                 preblocked_cells_.find(nearby_idx) != preblocked_cells_.end()) {
                 return false;
             }
-            const octomap::OcTreeNode * node = octree_->search(p);
-            if (node && octree_->isNodeOccupied(node)) {
+            if (isOccupiedCell(nearby_idx)) {
                 return false;
             }
             }
@@ -420,24 +451,14 @@ namespace global_planner
     {
         if (strict_direct_ground_support) {
         GridIndex below{idx.x, idx.y, idx.z - 1};
-        if (!isInsideMetricBounds(below)) {
-            return false;
-        }
-        const auto p = gridToWorld(below);
-        const octomap::OcTreeNode * node = octree_->search(p);
-        return node && octree_->isNodeOccupied(node);
+        return isOccupiedCell(below);
         }
 
         for (int dz = 1; dz <= std::max(1, support_depth_cells); ++dz) {
         for (int dx = -support_xy_radius_cells; dx <= support_xy_radius_cells; ++dx) {
             for (int dy = -support_xy_radius_cells; dy <= support_xy_radius_cells; ++dy) {
             GridIndex below{idx.x + dx, idx.y + dy, idx.z - dz};
-            if (!isInsideMetricBounds(below)) {
-                continue;
-            }
-            const auto p = gridToWorld(below);
-            const octomap::OcTreeNode * node = octree_->search(p);
-            if (node && octree_->isNodeOccupied(node)) {
+            if (isOccupiedCell(below)) {
                 return true;
             }
             }
@@ -449,16 +470,12 @@ namespace global_planner
     void GlobalPlanner::rebuildPreblockedCells()
     {
         preblocked_cells_.clear();
-        if (!octree_) {
+        if (occupied_set_.empty()) {
         return;
         }
 
         std::unordered_set<GridIndex, GridIndexHash> candidates;
-        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
-        if (!octree_->isNodeOccupied(*it)) {
-            continue;
-        }
-        const GridIndex occ = worldToGrid(it.getX(), it.getY(), it.getZ());
+        for (const auto & occ : occupied_set_) {
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
             if (dx == 0 && dy == 0) {
@@ -554,7 +571,7 @@ namespace global_planner
     void GlobalPlanner::rebuildDerivedLayers()
     {
         traversable_cells_.clear();
-        if (!octree_) {
+        if (occupied_set_.empty()) {
         return;
         }
 
@@ -564,13 +581,6 @@ namespace global_planner
         const int support_depth_cells = ground_support_depth_cells_;
         const double robot_radius = robot_radius_;
         const bool lowest_traversable_only = lowest_traversable_only_;
-
-        // Collect all occupied grid cells — only cells above these can have ground support.
-        std::unordered_set<GridIndex, GridIndexHash> occupied_set;
-        for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
-            if (!octree_->isNodeOccupied(*it)) continue;
-            occupied_set.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
-        }
 
         // Cells that could possibly be traversable must have an occupied cell below.
         // Instead of scanning the entire bbox, iterate only occupied cells and check
@@ -588,9 +598,9 @@ namespace global_planner
         std::unordered_set<uint64_t> columns_done;
 
         printf("rebuildDerivedLayers: scanning %zu occupied cells (xy_radius=%d, z_depth=%d)...\n",
-               occupied_set.size(), max_xy_cand, max_dz_cand);
+               occupied_set_.size(), max_xy_cand, max_dz_cand);
 
-        for (const auto & occ : occupied_set) {
+        for (const auto & occ : occupied_set_) {
             for (int dx = -max_xy_cand; dx <= max_xy_cand; ++dx) {
                 for (int dy = -max_xy_cand; dy <= max_xy_cand; ++dy) {
                     for (int dz = 1; dz <= max_dz_cand; ++dz) {
@@ -603,7 +613,7 @@ namespace global_planner
                             if (columns_done.count(col)) continue;
                         }
                         if (!isInsideMetricBounds(candidate)) continue;
-                        if (occupied_set.count(candidate)) continue;
+                        if (occupied_set_.count(candidate)) continue;
 
                         checked.insert(candidate);
 
@@ -644,9 +654,7 @@ namespace global_planner
         if (!isInsideMetricBounds(idx)) {
         return false;
         }
-        const auto p = gridToWorld(idx);
-        const octomap::OcTreeNode * node = octree_->search(p);
-        return node && octree_->isNodeOccupied(node);
+        return occupied_set_.find(idx) != occupied_set_.end();
     }
 
     GridIndex GlobalPlanner::worldToGrid(double x, double y, double z) const
