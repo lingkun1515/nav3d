@@ -1,8 +1,10 @@
 # Dog3DNav - 机器狗3D导航框架
 
-ROS 2 Humble 工作空间，面向四足机器狗平台的3D导航系统。
+ROS 2 Foxy 工作空间（运行于 `dog3dnav-foxy` Docker 容器，Ubuntu 20.04 + CUDA 11.8），面向四足机器狗平台的3D导航系统。
 
 ## 项目架构
+
+> 本文件为 AI（Claude Code）工作上下文。面向用户的概述见 [README.md](README.md)。
 
 ```
 Dog3DNav/
@@ -26,7 +28,7 @@ Dog3DNav/
 基于 OctoPlanner3D 库（`~/Projects/NavProject/OctoPlanner3D/`）封装的 ROS 2 节点。
 
 **核心能力：**
-- 多格式地图加载（`.pcd` / `.bt` / `.ot` / `.world` / `.sdf`）与自动缓存，详见 [quickstart](docs/quickstart.md)
+- 多格式地图加载（`.pcd` / `.bt` / `.ot` / `.world` / `.sdf`）与自动 `.bt` 缓存（格式通过文件扩展名自动检测，详见 `octo_planner_node.cpp` 的 `load_map()`）
 - 基于 OctoMap 的 3D A* 路径搜索（`GlobalPlanner`）
 - 可通行性分析：地面支撑检测、膨胀禁行区、代价地图
 
@@ -156,14 +158,22 @@ Git submodule，由外部仓库导入。当前状态：预留。
 
 ## 构建与运行
 
-```bash
-# 构建（标准 colcon 工作流）
-cd ~/Projects/NavProject/Dog3DNav
-colcon build --symlink-install
+所有开发在 Docker 容器 `dog3dnav-foxy` 中进行。宿主机目录 bind-mount 到容器 `/ros2_ws`，改代码容器内立即可见。
 
-# Source 环境
+```bash
+# 进入容器
+docker exec -it dog3dnav-foxy bash
+source /opt/ros/foxy/setup.bash
+
+# 构建（首次或代码变更后）
+cd /ros2_ws
+colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+# 注意：不要用 --symlink-install（容器内 symlink 路径不兼容）
+
 source install/setup.bash
 ```
+
+详细步骤见 [docs/development.md](docs/development.md)。
 
 ## 坐标系约定
 
@@ -177,10 +187,15 @@ source install/setup.bash
 2. **代码位置**：功能应尽可能放入已有 C++ 节点（localPlanner / pathFollower），而非新增中继节点。新增 ROS 参数来控制行为切换。
 3. **禁止主动 commit**：除非用户明确要求 commit，否则永远不要执行 git commit。先改代码、验证、等用户确认再提交。
 
+## 关键文档
+
+- [docs/development.md](docs/development.md) — 容器构建、运行、调试全流程
+- [docs/architecture.md](docs/architecture.md) — 系统架构、数据流、话题对照、关键机制
+
 ## 已确定设计决策
 
 1. **Web 通信方案**：rosbridge WebSocket（`ws://localhost:9090`），使用 roslib.min.js 客户端库
-2. **地图管理**：octo_planner 支持多格式输入与自动缓存（详见 quickstart）；预处理脚本 `src/bringup/maps/map_preprocessor.py` 负责对齐/降采样/补全
+2. **地图管理**：octo_planner 支持多格式输入与自动 `.bt` 缓存（格式通过文件扩展名自动检测）；预处理脚本 `src/bringup/maps/map_preprocessor.py` 负责对齐/降采样/补全
 3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
 
 ## 闭环导航测试
@@ -204,13 +219,5 @@ ros2 launch bringup navigation.launch.py launch_rviz:=false launch_rosbridge:=tr
 ```
 
 ### 数据流
-```
-完整管线 (仿真 + 导航栈):
-  Web UI ─/goal_pose→ octo_planner ─/planned_path→ localPlanner (航点管理+TF)
-         ─/start_navigation→ localPlanner
-         ─/stop_navigation→ pathFollower
-  Gazebo ─/odom→ (remap)→ /state_estimation→ localPlanner + pathFollower
-         ─/scan→ localPlanner (内部 LaserScan→PointCloud2 + TF→odom)
-  localPlanner ─/path→ pathFollower ─/cmd_vel→ Gazebo
-  RViz2 可视化: TF + RobotModel + Odometry + /planned_path + /path + /scan + OctoMap
-```
+
+详见 [docs/architecture.md](docs/architecture.md) 的话题对照表和数据流图。

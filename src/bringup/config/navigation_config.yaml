@@ -59,10 +59,6 @@ octo_planner_node:
     # XY window for world/sdf loading (0 = no cropping)
     world_xy_window_size_m: 24.0
 
-    # Occupied cloud publishing (for corridor trust in localPlanner)
-    # 0 = unlimited; set to e.g. 30.0 to only send voxels within this radius of robot
-    occupied_cloud_radius: 10.0
-
     # Online incremental OctoMap update from real-time point cloud
     online_update_enabled: true
     online_update_cloud_topic: "/lidar_points"
@@ -141,13 +137,6 @@ latticePlanner:
     waypoint_lookahead: 2.5
     waypoint_tolerance: 0.5
 
-    # Corridor trust — trust known static geometry near global path (stairs)
-    corridor_trust_mode: false
-    corridor_slope_threshold: 0.15
-    corridor_xy_margin: 0.5
-    corridor_z_margin: 0.3
-    octomap_voxel_resolution: 0.1
-
 pathFollower:
   ros__parameters:
     # Hardware
@@ -189,7 +178,6 @@ pathFollower:
     stopTime: 5.0
     noRotAtStop: false
     noRotAtGoal: true
-    corridor_tilt_threshold: 60.0
     cmdVelTimeout: 0.2
 
     # Autonomy

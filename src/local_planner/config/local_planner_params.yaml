@@ -60,13 +60,6 @@ latticePlanner:
     waypoint_lookahead: 2.5
     waypoint_tolerance: 0.5
 
-    # Corridor trust — trust known static geometry near global path (stairs)
-    corridor_trust_mode: false
-    corridor_slope_threshold: 0.15
-    corridor_xy_margin: 0.5
-    corridor_z_margin: 0.3
-    octomap_voxel_resolution: 0.1
-
 nav2CostmapPlanner:
   ros__parameters:
     # Vehicle geometry
@@ -220,7 +213,6 @@ pathFollower:
     stopTime: 5.0
     noRotAtStop: false
     noRotAtGoal: true
-    corridor_tilt_threshold: 60.0
     cmdVelTimeout: 0.2
 
     # Autonomy

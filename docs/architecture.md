@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  浏览器 (localhost:8080)                                    │
+│  浏览器 (localhost:8000)                                    │
 │  Three.js 3D 渲染 ←→ rosbridge WebSocket :9090             │
 └──────────┬────────────────────────────────────┬─────────────┘
            │ 发布: /start_point, /goal_point,    │ 订阅: TF, OctoMap
@@ -24,338 +24,128 @@
 │      OctoMap Markers  │    │  └──────────┘   └────────────┘   │
 └──────────────────────┘    └──────────────────────────────────┘
            ▲                           ▲
-           │                           │
            │    ┌──────────────────────┴────────────────┐
            │    │  仿真 / 传感器                         │
-           └────┤  /odom (Odometry, remap→/state_estimation) │
-                │  /scan (LaserScan, C++内部转PointCloud2)  │
-                │  /tf (odom→base_footprint→base_link)     │
+           └────┤  /odom (Odometry)                     │
+                │  /scan (LaserScan, C++内部转PC2+TF)   │
+                │  /tf (odom→base_footprint→base_link)  │
                 └────────────────────────────────────────┘
 ```
 
-## 模块详解
+## 模块
 
-### 1. 地图预处理 — `src/bringup/maps/map_preprocessor.py`
+### octo_planner — 全局3D规划
 
-**定位：** 离线工具，不参与在线导航。
+节点 `octo_planner_node`，源码 `src/octo_planner/src/octo_planner_node.cpp`。
 
-**输入：** 原始 SLAM 点云 (PCD)
+**流程：**
+1. 启动时加载地图（多格式自动检测：`.pcd/.bt/.ot/.world/.sdf`，首次 `.bt` 自动缓存）
+2. OctoMap 可通行性分析：地面支撑检测、代价膨胀、禁行区标记
+3. 等待 `/goal_point`（或 `/goal_pose`），用 `/start_point`（优先）或 `/odom` 作为起点
+4. 3D A* 搜索（`GlobalPlanner::makePlan`）→ `/planned_path`
 
-**处理流水线：**
-```
-原始PCD → [体素降采样] → RANSAC地面提取 → 重力对齐旋转
-→ 法向量统计墙面方向 → XY轴旋转对齐 → 平移原点 → [地面补全] → 输出PCD
-```
+**关键话题：** 入 `/start_point`、`/goal_point`、`/goal_pose`、`/odom`、`/pcd_file_cmd`；出 `/planned_path`、OctoMap Marker 系列
 
-**关键输出：** 对齐后的 `map_nav3d.pcd`，坐标系满足：
-- XY 平面平行于建筑墙面
-- Z 轴垂直于地面
-- 原点 = 地面中心点
+**规划触发条件（`try_plan()`）：** ① 地图已加载 ② 起点可用（显式 `/start_point` > `/odom` 自动） ③ 终点已设置。三者同时满足才执行 A*。
 
-**与 octo_planner 的衔接：** 预处理后的 PCD 直接作为 `octo_planner_node` 的地图输入。首次加载自动生成 `.bt` 缓存，后续启动直接加载 `.bt`。
+参数见 `src/octo_planner/config/planner_params.yaml` 和 `src/bringup/config/navigation_config.yaml`。
 
----
+### local_planner — 局部规划与跟踪
 
-### 2. 全局规划 — `octo_planner`
+两个独立节点，同一 package（`src/local_planner/`）。
 
-**节点：** `octo_planner_node`
+**latticePlanner**（100Hz）：
+- 订阅 `/scan`（LaserScan，内部转 PC2+TF）或 `/registered_scan`（PC2）
+- 343 条预生成路径 × 36 旋转角 = 12,348 组合评分，O(1) 碰撞查找（`paths/correspondences.txt`）
+- 选最优无碰路径 → `/path`（vehicle 帧），发布 `/slow_down`、`/surrounding_block`
+- 订阅 `/planned_path` 管理航点推进（`/start_navigation` 激活）
 
-**工作逻辑：**
+**pathFollower**（100Hz）：
+- Pure-pursuit 跟踪 `/path` → `/cmd_vel`（Twist）
+- 含安全停车、倾角减速、侧向避障、双向行驶模式
 
-1. 启动时加载地图文件（多格式自动检测），转为 OctoMap（3D 占据栅格）
-2. 基于 OctoMap 构建可通行性 map：地面支撑检测、代价膨胀、禁行区标记
-3. 等待 Web 前端下发起点 `/start_point` 和终点 `/goal_point`（或 `/goal_pose`）
-4. 收到终点后触发 `try_plan()`，满足全部三个条件才执行 `GlobalPlanner::makePlan()`（3D A* 搜索）
-5. 将规划结果 `/planned_path` 发送到 Web 前端展示
+参数见 `src/local_planner/config/local_planner_params.yaml` 和 `src/bringup/config/navigation_config.yaml`。
 
-**全局路径触发条件（`try_plan()`）：**
+预生成路径文件：`paths/startPaths.ply`、`paths/paths.ply`、`paths/pathList.ply`、`paths/correspondences.txt`。
 
-`try_plan()` **仅**在收到终点话题（`/goal_point` 或 `/goal_pose`）时调用，不在收到起点时调用。规划执行需同时满足三个条件：
+### simulation — Gazebo 仿真
 
-| 条件 | 变量 | 满足方式 |
-|------|------|----------|
-| 地图已加载 | `map_ready_` | 启动时自动设为 true |
-| 起点可用 | `has_explicit_start_` 或 `has_odom_` | 显式：收到 `/start_point`；自动：收到 `/odom` 里程计 |
-| 终点已设置 | `has_goal_` | 收到 `/goal_point` 或 `/goal_pose` 后设为 true |
+差速驱动小车 URDF + Gazebo 插件（diff_drive + lidar + joint_states），发布 `/odom`、`/scan`、TF，接收 `/cmd_vel`。
 
-**起点优先级：** 显式 `/start_point` > 里程计 `/odom` 自动位姿。如果用户发送过 `/start_point`，始终使用该显式起点；否则自动使用最新 `/odom` 位置作为起点。两者都没有时才报 WARN 跳过。
+离线脚本 `pcd_to_world.py` / `bt_to_world.py` 将地图转为 `.world` 文件（占据体素 → 贪婪合并 → SDF box）。launch 不动态生成世界。
 
-**推荐用法：**
-```
-# 仿真场景：直接发目标即可，odom 自动提供起点
-ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.0, z: 0.0}}" --once
+源码 `src/simulation/`，启动：`ros2 launch simulation gazebo.launch.py [world:=...] [robot_model:=car|a1]`。
 
-# 需要指定起点时（如真实机器人初始位姿不准确）：
-ros2 topic pub /start_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 0.0, y: 0.0, z: 0.0}}" --once
-ros2 topic pub /goal_point geometry_msgs/PointStamped "{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.0, z: 0.0}}" --once
-```
+### bringup — 启动配置
 
-**时序注意：** 如果先发终点、后里程计才就绪，`try_plan()` 会被跳过，需重新发送终点触发规划。
+纯配置包（无 C++/Python 节点），统一管理 launch 和 config：
+- `launch/navigation.launch.py` — 导航栈启动（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2）
+- `launch/slam.launch.py` — SLAM 启动（super_lio mapping/relocation + TF 补齐）
+- `config/navigation_config.yaml` — 导航栈统一参数（所有节点的 ros__parameters）
 
-`try_plan()` 返回空结果时，发布空路径到 `/planned_path`（日志 WARN: "Planning failed"）。
+### web — 前端
 
-**话题接口：**
+Three.js + ROSBridge（`ws://localhost:9090`）。3D 体素渲染（占据/可通行/禁行/代价四层）、选点导航、地图编辑（笔刷 ± 体素 + 200ms debounce 同步）、虚拟摇杆。
 
-| 方向 | 话题 | 类型 | 说明 |
-|------|------|------|------|
-| 入 | `/start_point` | PointStamped | 起点(map帧)，优先于 odom |
-| 入 | `/goal_point` | PointStamped | 终点(map帧) |
-| 入 | `/goal_pose` | PoseStamped | 终点(含朝向) |
-| 入 | `/odom` | Odometry | 里程计，自动作为起点（/start_point 未设时） |
-| 入 | `/pcd_file_cmd` | String | 动态切换地图文件 |
-| 出 | `/planned_path` | Path | 全局路径(map帧) |
-| 出 | `/octomap` | Octomap | 完整OctoMap(transient_local) |
-| 出 | `/octomap_occupied_markers` | Marker | 占据体素(橘色) |
-| 出 | `/traversable_cells_markers` | Marker | 可通行体素(绿色) |
-| 出 | `/preblocked_cells_markers` | Marker | 禁行体素(蓝色) |
-| 出 | `/risk_cost_cells` | PointCloud2 | 代价云(intensity=代价) |
+源码 `web/`，操作详见 [开发指南](development.md#web-ui)。
 
-**关键参数：**
+## 数据流
 
-| 参数 | 默认 | 含义 |
-|------|------|------|
-| `resolution` | 0.2 | OctoMap体素分辨率(m) |
-| `robot_radius` | 0.05 | 碰撞检测半径(m) |
-| `max_iterations` | 500000 | A*搜索上限 |
-| `require_ground_support` | true | 要求地面支撑 |
-| `enable_preblocked_costmap` | true | 代价膨胀 |
-| `octomap_publish_period_s` | 5.0 | 定时重发周期(s) |
-
----
-
-### 3. 局部规划与跟踪 — `local_planner`
-
-包含两个独立节点，共用同一 package。
-
-#### 3.1 localPlanner — Lattice 局部规划
-
-**节点：** `localPlanner`
-
-**工作逻辑（100Hz循环）：**
-
-1. 将传感器点云变换到 vehicle 坐标系
-2. 检测周围6个方向的障碍物遮挡位掩码 → `/surrounding_block`
-3. 对 343 条预生成路径 × 36 个旋转角 = 12,348 种组合逐一评分：
-   - 通过预计算的 72,611 体素对应表 (`correspondences.txt`) 实现 O(1) 碰撞查找
-   - 每条路径得分 = 方向差异权重 × 旋转角权重 × 分组权重
-4. 选择得分最高的无碰路径 → `/path`
-5. 统计可通行路径数 + 地面代价 → `/slow_down`（0~3级慢行）
-6. 无满意结果时缩小路径缩放/范围重试
-
-**话题接口：**
-
-| 方向 | 话题 | 类型 | 说明 |
-|------|------|------|------|
-| 入 | `/state_estimation` | Odometry | 机器人位姿（通过 remap 订阅 `/odom`） |
-| 入 | `/scan` | LaserScan | 激光扫描（use_laser_scan=true 时） |
-| 入 | `/registered_scan` | PointCloud2 | 激光点云（use_laser_scan=false 时） |
-| 入 | `/planned_path` | Path | 全局路径（use_planned_path=true 时） |
-| 入 | `/start_navigation` | Bool | 激活航点推进 |
-| 入 | `/way_point` | PointStamped | 导航目标点（use_planned_path=false 时） |
-| 入 | `/terrain_map` | PointCloud2 | 地形分析云 |
-| 入 | `/joy` | Joy | 手柄控制 |
-| 入 | `/speed` | Float32 | 速度覆盖 |
-| 入 | `/navigation_boundary` | PolygonStamped | 虚拟边界 |
-| 入 | `/added_obstacles` | PointCloud2 | 手动障碍物 |
-| 入 | `/check_obstacle` | Bool | 避障开关 |
-| 出 | `/path` | Path | 局部路径(vehicle帧) |
-| 出 | `/slow_down` | Int8 | 减速等级(0~3) |
-| 出 | `/surrounding_block` | Int8 | 6-bit遮挡掩码 |
-| 出 | `/free_paths` | PointCloud2 | 无碰路径可视化 |
-
-**关键参数（输入模式）：**
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `use_laser_scan` | `false` | true=订阅 `/scan`(LaserScan)，C++内部转 PointCloud2+TF |
-| `use_planned_path` | `false` | true=订阅 `/planned_path`(Path)，自行管理航点推进 |
-| `global_frame_id` | `"odom"` | 障碍物点云 TF 转换的目标坐标系 |
-| `waypoint_lookahead` | `2.5` | 航点前视距离 (m) |
-| `waypoint_tolerance` | `0.5` | 航点到达容差 (m) |
-
-**预生成路径文件（`paths/`）：**
-
-| 文件 | 内容 |
-|------|------|
-| `startPaths.ply` | 7 组种子路径（按曲率/方向分组） |
-| `paths.ply` | 343 条完整路径几何点 |
-| `pathList.ply` | 每条路径的终点位姿 + 所属组 |
-| `correspondences.txt` | 72,611 个网格体素 → 被阻挡路径ID的映射表 |
-
-#### 3.2 pathFollower — Pure-Pursuit 轨迹跟踪
-
-**节点：** `pathFollower`
-
-**工作逻辑（100Hz循环）：**
-
-1. 接收 `/path`（vehicle 帧），记录发布时刻的参考位姿
-2. 将当前位姿转换为相对参考位姿的增量位移
-3. 从路径起点扫描，找到第一个距离 > `lookAheadDis` 的航点
-4. 计算航向角误差 `dirDiff = 当前yaw - 参考yaw - pathDir`
-5. 双向行驶模式：当误差 > 90° 时自动切换前进/后退方向
-6. P 控制器输出横摆角速度：
-   - 行驶中：`yawRate = -yawRateGain × dirDiff`
-   - 静止时：`yawRate = -stopYawRateGain × dirDiff`
-7. 速度 ramping：加速度限制平滑逼近目标速度
-8. 多级减速：倾角减速、`/slow_down` 指令、路径末端减速
-9. 应急停止：`/stop` + 倾角超限
-
-**话题接口：**
-
-| 方向 | 话题 | 类型 | 说明 |
-|------|------|------|------|
-| 入 | `/state_estimation` | Odometry | 机器人位姿（通过 remap 订阅 `/odom`） |
-| 入 | `/path` | Path | 跟随路径(vehicle帧) |
-| 入 | `/joy` | Joy | 手柄 |
-| 入 | `/speed` | Float32 | 速度覆盖 |
-| 入 | `/stop` | Int8 | 急停(1=停车,2=也停转向) |
-| 入 | `/stop_navigation` | Bool | 导航停止（Web UI 下发，安全停车） |
-| 入 | `/slow_down` | Int8 | 慢行等级 |
-| 入 | `/surrounding_block` | Int8 | 周边遮挡位掩码 |
-| 出 | `/cmd_vel` | Twist | 速度指令(vehicle帧) |
-
----
-
-### 4. Web 前端 — `web/`
-
-**定位：** 用户交互 + 3D 可视化
-
-**通信：** rosbridge WebSocket (默认 `ws://localhost:9090`)
-
-**用户操作 → ROS 指令映射：**
-
-| 用户操作 | 发布话题 | 说明 |
-|----------|----------|------|
-| 点击「设置起点」→ 地图选点 | `/start_point` | 发送到 octo_planner |
-| 点击「设置终点」→ 地图选点 | `/goal_point` + `/goal_pose` | 发送到 octo_planner |
-| 点击「导航目标」→ 选点 → 弹窗确认 | `/goal_point` + `/start_navigation` | 触发全局规划 |
-| 点击「停止导航」 | `/stop_navigation` | 中止导航 |
-| 拖拽虚拟摇杆 | `/web_cmd_vel` | 手动控制(80ms间隔) |
-| 滑动旋转条 | `/web_cmd_vel` | 原地旋转 |
-| 编辑模式下拖拽刷地形 | `/add_occupied_voxels` 或 `/remove_occupied_voxels` | 批量 PointCloud2，体素坐标列表 |
-| 点击「保存地图」 | `/save_octomap_path` | 保存 .bt 文件路径 |
-| 点击「加载地图」 | `/load_map_file` | 加载地图文件路径 |
-
-**ROS 数据 → 3D 渲染映射：**
-
-| 订阅话题 | 渲染内容 | 颜色 |
-|----------|----------|------|
-| `/octomap_occupied_markers` | 占据体素立方体 | 橘色 |
-| `/traversable_cells_markers` | 可通行体素(可选点) | 绿色半透明 |
-| `/preblocked_cells_markers` | 禁行区体素 | 蓝色半透明 |
-| `/risk_cost_cells` | 代价风险云 | 蓝色(按cost调不透明度) |
-| `/planned_path` | 全局路径管状线 | 紫色 |
-| `/tf` + `/tf_static` | 机器人3D模型(狗) | 青色 |
-
-**选点交互：**
-- 射线检测 (`Raycaster`) 与可通行体素的 InstancedMesh 求交
-- 确定选中点后，通过拖拽方向计算朝向 (yaw)
-- 起点以绿球标记、终点以红球标记
-
-**地图编辑交互：**
-- 点击「编辑地图」进入编辑模式，展开编辑控件面板
-- 笔刷模式：添加占据（橘色）或擦除占据（红色预览）
-- 笔刷大小：1x1 / 3x3 / 5x5 体素网格
-- Z 高度：滑块调节或 Q/E 键升降（步长 = 体素分辨率）
-- 拖拽鼠标刷地形，体素即时本地渲染（重建 InstancedMesh）
-- 200ms debounce 后通过 PointCloud2 批量发送到 octo_planner
-- octo_planner 收到后更新 OcTree → `reanalyze()` 重分析可通行区 → 重新发布 Marker → Web 更新显示
-- 编辑链路：Web 笔刷 → `/add_occupied_voxels` / `/remove_occupied_voxels` → octo_planner_node → `updateNode()` → `updateInnerOccupancy()` → `planner_->reanalyze()` → `republish_all()` → Web 订阅更新
-
----
-
-## 典型工作流
-
-### 离线建图流程
-
-```
-SLAM原始点云
-    │
-    ▼
-map_preprocessor.py  ──→  map_nav3d.pcd (位于 src/bringup/maps/)
-(对齐+降采样+补全)
-```
-
-### 在线导航流程（Web → 规划 → 仿真闭环）
-
-```
-终端1: ros2 launch simulation gazebo.launch.py   (Gazebo 仿真)
-终端2: ros2 launch bringup navigation.launch.py     (导航栈 + rosbridge + RViz2)
-```
+### Web → 规划 → 控制闭环
 
 ```
 浏览器                     rosbridge                octo_planner           localPlanner
   │                           │                         │                      │
   │── 订阅 Marker话题 ────────│── 定时推送(5s) ─────────│                      │
-  │   地图体素渲染             │                         │                      │
-  │                           │                         │                      │
-  │── /start_point ──────────►│────────────────────────►│ 记录起点              │
-  │── /goal_point ───────────►│────────────────────────►│ 记录终点 + 触发A*    │
-  │                           │                         │                      │
+  │── /start_point ──────────►│────────────────────────►│                      │
+  │── /goal_point ───────────►│────────────────────────►│ 触发A*              │
   │                           │◄─── /planned_path ──────│                      │
   │◄─ /planned_path ─────────│                         │                      │
-  │   紫色路径线渲染           │                         │                      │
-  │                           │                         │                      │
   │── /start_navigation ─────►│─────────────────────────│─────────────────────►│
-  │                           │                         │      激活航点推进     │
-  │                           │                         │                      │
   │                           │                         │    /planned_path ───►│
-  │                           │                         │    (航点管理+避障)   │
-  │                           │                         │                      │
-  │── /stop_navigation ───────│─────────────────────────│──(停止)──────────────►│
+  │── /stop_navigation ───────│─────────────────────────│─────────────────────►│
   │                           │                         │                pathFollower
   │                           │                         │                安全停车
 ```
 
-### local_planner 闭环控制流程
+### local_planner 闭环
 
 ```
-Gazebo/Odometry                  localPlanner              pathFollower        机器人
-    │                               │                         │                 │
-    │── /odom ──(remap)────────────►│                         │                 │
-    │── /scan ──────────────────────►│                         │                 │
-    │   (LaserScan→PC2+TF 内部转换)  │                         │                 │
-    │                               │                         │                 │
-    │── /planned_path ──────────────►│(航点管理+lookahead)     │                 │
-    │── /start_navigation ──────────►│                         │                 │
-    │                               │                         │                 │
-    │                         100Hz:│ 点云→障碍物grid          │                 │
-    │                         路径评分→选最优                 │                 │
-    │                               │                         │                 │
-    │                               │── /path ────────────────►│                 │
-    │                               │── /slow_down ───────────►│                 │
-    │                               │── /surrounding_block ────►│                 │
-    │                               │                         │                 │
-    │── /odom ──(remap)─────────────│─────────────────────────►│                 │
-    │── /stop_navigation ───────────│─────────────────────────►│                 │
-    │                               │                   100Hz:│ pure-pursuit    │
-    │                               │                   P控制 │                 │
-    │                               │                         │── /cmd_vel ────►│
+Gazebo                          localPlanner              pathFollower
+  │── /odom ─────────────────────►│                         │
+  │── /scan ──────────────────────►│ (LaserScan→PC2+TF)     │
+  │── /planned_path ──────────────►│ (航点管理+lookahead)    │
+  │                          100Hz:│ 点云→障碍物→路径评分    │
+  │                               │── /path ────────────────►│
+  │                               │── /slow_down ───────────►│
+  │── /odom ──────────────────────│─────────────────────────►│
+  │                               │                   100Hz:│ pure-pursuit
+  │                               │                         │── /cmd_vel ──►
 ```
 
----
+### 话题对照
 
-## 当前集成状态
-
-| 链路 | 状态 | 说明 |
-|------|------|------|
-| Web → octo_planner 规划 | ✅ 已打通 | `/start_point` + `/goal_point` → `/planned_path` |
-| Web 地图可视化 | ✅ 已打通 | Marker 体素分层渲染 |
-| Web 机器人位姿显示 | ✅ 已打通 | TF 解析 + 3D模型 |
-| Web 手动控制 → 机器人 | ✅ 已打通 | Web 发 `/web_cmd_vel`(Twist)，pathFollower 订阅后透传 |
-| localPlanner → pathFollower | ✅ 已打通 | `/path` + `/slow_down` + `/surrounding_block` |
-| octo_planner → localPlanner | ✅ 已打通 | `/planned_path`(Path) 直接订阅，localPlanner 内部管理航点推进 |
-| localPlanner 感知 | ✅ 已打通 | `/scan`(LaserScan) 内部转 PointCloud2 + TF→odom |
-| pathFollower → Gazebo | ✅ 已打通 | `/cmd_vel`(Twist) 直接驱动 diff_drive 插件 |
-| pathFollower → 真实机器人 | ⚠️ 待对接 | `/cmd_vel` 到真实电机驱动接口（串口或 DDS） |
-
-> **注意：** 项目中不存在 Python 中继节点。所有里程计转发、点云格式转换、航点管理、速度适配等逻辑已下沉到 localPlanner/pathFollower (C++) 或通过 launch remap 解决。
+完整话题列表见 [开发指南 - 话题对照表](development.md#话题对照表)。
 
 ## 坐标系约定
 
-| 帧 | 说明 | 使用者 |
-|----|------|--------|
-| `map` | 全局固定坐标系 | octo_planner 输入/输出 |
-| `odom` | 里程计坐标系 | TF 链中间帧 |
-| `vehicle` | 机器人本体坐标系 | localPlanner 路径输出、pathFollower 指令输出 |
+| 帧 | 说明 | 来源 |
+|----|------|------|
+| `map` | 全局固定坐标系 | SLAM 输出 / octo_planner |
+| `odom` | 里程计坐标系 | Gazebo 真值 / SLAM remap |
+| `vehicle` | 机器人本体坐标系 | localPlanner 路径输出 |
 | `base_link` | 机器狗本体帧 | Web 前端 3D 模型定位 |
+| `base_footprint` | 足底投影 | 静态 TF（slam.launch.py 补齐） |
+
+## 关键机制
+
+### 在线增量 OctoMap 更新
+
+**流程：** 实时点云 `/lidar_points` → TF 变换到 map 帧 → `updateNode()` + `updateInnerOccupancy()` 写入 OcTree → 定时（默认 60s）`reanalyze()` 重分析可通行区 → `republish_all()` 更新 Marker。
+
+**实现位置：**
+- `octo_planner_node.cpp` → `on_online_cloud()`：TF 变换 + 体素过滤（空间范围 + 保守模式 Z 补偿）+ 写入 OcTree
+- `octo_planner_node.cpp` → `on_online_reanalyze()`：后台线程 `reanalyze()` + 重新发布
+- 支持两种模式：raycasting（`insertPointCloud`）和手动 `updateNode`
+
+**配置：** `navigation_config.yaml` 中 `online_update_enabled`（默认 `false`）+ `online_update_period_s/occupied_prob/use_raycasting/conservative_mode/min_interval_ms/downsample_step/max_xy_distance/max_z_above/max_z_below`
