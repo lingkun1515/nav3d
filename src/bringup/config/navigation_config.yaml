@@ -39,7 +39,7 @@ octo_planner_node:
     max_iterations: 500000
     snap_search_radius_cells: 8
     require_ground_support: true
-    strict_direct_ground_support: true
+    strict_direct_ground_support: false
     ground_support_xy_radius_cells: 1
     ground_support_depth_cells: 2
     enable_preblocked_costmap: true
@@ -67,12 +67,15 @@ octo_planner_node:
     # Conservative mode: instead of updating the voxel at the hit point,
     # update the voxel behind along the sensor ray (inflates obstacles)
     online_update_use_raycasting: true
-    online_update_conservative_mode: false
+    online_update_conservative_mode: true
     online_update_min_interval_ms: 500
     online_update_downsample_step: 1
     online_update_max_xy_distance: 10.0
-    online_update_max_z_above: 2.0
+    online_update_max_z_above: 0.5
     online_update_max_z_below: 5.0
+    # Miss probability for raycasting clear pass (lower = more aggressive clearing).
+    # Default 0.15 gives log-odds ≈ -1.74 per ray vs tree default 0.4 (-0.41).
+    online_update_ray_clear_prob_miss: 0.15
 
 latticePlanner:
   ros__parameters:

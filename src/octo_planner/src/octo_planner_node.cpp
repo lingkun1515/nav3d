@@ -114,6 +114,7 @@ private:
     declare_parameter("online_update_max_xy_distance", 0.0);
     declare_parameter("online_update_max_z_above", 0.0);
     declare_parameter("online_update_max_z_below", 0.0);
+    declare_parameter("online_update_ray_clear_prob_miss", 0.15);
 
     declare_parameter("replan_period_s", 0.0);
   }
@@ -225,6 +226,7 @@ private:
       max_xy_distance_ = get_parameter("online_update_max_xy_distance").as_double();
       max_z_above_ = get_parameter("online_update_max_z_above").as_double();
       max_z_below_ = get_parameter("online_update_max_z_below").as_double();
+      ray_clear_prob_miss_ = get_parameter("online_update_ray_clear_prob_miss").as_double();
 
       online_cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         online_update_cloud_topic_, rclcpp::QoS(5).best_effort(),
@@ -235,12 +237,12 @@ private:
         [this]() { on_online_reanalyze(); });
 
       RCLCPP_INFO(get_logger(),
-        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s interval=%dms downsample=%d xy_max=%.1f z_above=%.1f z_below=%.1f",
+        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s interval=%dms downsample=%d xy_max=%.1f z_above=%.1f z_below=%.1f clear_miss=%.2f",
         online_update_cloud_topic_.c_str(), online_update_period_s_, online_update_occupied_prob_,
         use_raycasting_ ? "on" : "off",
         conservative_mode_ ? "on" : "off",
         min_interval_ms_, downsample_step_,
-        max_xy_distance_, max_z_above_, max_z_below_);
+        max_xy_distance_, max_z_above_, max_z_below_, ray_clear_prob_miss_);
     }
   }
 
@@ -940,9 +942,14 @@ private:
       // Cast rays from sensor to ALL points and clear free space along
       // every ray.  Endpoints are NOT touched here — occupation is
       // handled separately in Phase 2 (in-range only).
+      //
+      // We use a configurable aggressive miss probability (default 0.15)
+      // instead of the tree's default (0.4) so that a single ray pass
+      // strongly clears occupied cells: log-odds per pass ≈ -1.74 vs
+      // default -0.41 (4.3× faster).
       if (use_raycasting_) {
         float miss_log = static_cast<float>(
-          std::log(octree_->getProbMiss() / (1.0 - octree_->getProbMiss())));
+          std::log(ray_clear_prob_miss_ / (1.0 - ray_clear_prob_miss_)));
 
         octomap::point3d origin(static_cast<float>(sensor_x),
                                 static_cast<float>(sensor_y),
@@ -967,7 +974,8 @@ private:
         }
 
         RCLCPP_DEBUG(get_logger(),
-          "Online ray-clearing: %d rays cast", ray_count);
+          "Online ray-clearing: %d rays cast (clear_miss=%.2f log_odds=%.3f)",
+          ray_count, ray_clear_prob_miss_, miss_log);
       }
 
       // === Phase 2: Occupancy marking (both modes, in-range only) ===
@@ -1081,6 +1089,7 @@ private:
   double max_xy_distance_{0.0};
   double max_z_above_{0.0};
   double max_z_below_{0.0};
+  double ray_clear_prob_miss_{0.15};
   rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
 
   // Persistent background worker — spin thread is never blocked
