@@ -183,15 +183,6 @@ source install/setup.bash
 2. **地图管理**：octo_planner 支持多格式输入与自动缓存（详见 quickstart）；预处理脚本 `src/bringup/maps/map_preprocessor.py` 负责对齐/降采样/补全
 3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
 
-## 待解决
-
-1. ~~**cmd_vel 类型适配**~~ ✓ 已修复：pathFollower 改为发布 `Twist`（原 `TwistStamped`）
-2. ~~**nav_bridge.py**~~ ✓ 已删除：功能通过 launch remap + localPlanner C++ 内部实现（TF 坐标变换 + LaserScan→PointCloud2 转换 + `/planned_path` 航点管理）
-3. ~~**local_planner 数据流**~~ ✓ 全链路已打通：localPlanner 直接订阅 `/scan`(LaserScan) 或 `/registered_scan`(PointCloud2)，通过 TF 转全局系；支持 `/planned_path`(航点管理) 或 `/way_point`(直设目标)；`/odom` 通过 remap 替代 `/state_estimation`
-4. ~~**导航生命周期**~~ ✓ 已实现：`/start_navigation`(Bool) 由 Web UI 和 localPlanner 管理；`/stop_navigation`(Bool) 由 pathFollower 处理（安全停车）
-5. ~~**waypoint_follower.py**~~ ✓ 已删除：`navigation.launch.py` 现已使用 localPlanner + pathFollower (C++) 做全闭环控制，PCD→world 场景自动生成
-6. **机器狗运动学适配**：真实机器狗的速度指令接口（Twist vs 自定义）、运动约束参数
-
 ## 闭环导航测试
 
 ### 启动命令

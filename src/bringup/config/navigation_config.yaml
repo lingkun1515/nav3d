@@ -74,6 +74,9 @@ octo_planner_node:
     online_update_conservative_mode: false
     online_update_min_interval_ms: 500
     online_update_downsample_step: 1
+    online_update_max_xy_distance: 10.0
+    online_update_max_z_above: 2.0
+    online_update_max_z_below: 5.0
 
 latticePlanner:
   ros__parameters:

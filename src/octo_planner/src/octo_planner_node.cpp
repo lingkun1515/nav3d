@@ -112,6 +112,9 @@ private:
     declare_parameter("online_update_use_raycasting", false);
     declare_parameter("online_update_min_interval_ms", 500);
     declare_parameter("online_update_downsample_step", 1);
+    declare_parameter("online_update_max_xy_distance", 0.0);
+    declare_parameter("online_update_max_z_above", 0.0);
+    declare_parameter("online_update_max_z_below", 0.0);
 
     declare_parameter("replan_period_s", 0.0);
   }
@@ -222,6 +225,9 @@ private:
       use_raycasting_ = get_parameter("online_update_use_raycasting").as_bool();
       min_interval_ms_ = get_parameter("online_update_min_interval_ms").as_int();
       downsample_step_ = get_parameter("online_update_downsample_step").as_int();
+      max_xy_distance_ = get_parameter("online_update_max_xy_distance").as_double();
+      max_z_above_ = get_parameter("online_update_max_z_above").as_double();
+      max_z_below_ = get_parameter("online_update_max_z_below").as_double();
 
       online_cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
         online_update_cloud_topic_, rclcpp::QoS(5).best_effort(),
@@ -232,11 +238,12 @@ private:
         [this]() { on_online_reanalyze(); });
 
       RCLCPP_INFO(get_logger(),
-        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s interval=%dms downsample=%d",
+        "Online OctoMap update enabled: topic=%s, period=%.1fs, prob=%.2f, raycasting=%s conservative=%s interval=%dms downsample=%d xy_max=%.1f z_above=%.1f z_below=%.1f",
         online_update_cloud_topic_.c_str(), online_update_period_s_, online_update_occupied_prob_,
         use_raycasting_ ? "on" : "off",
         conservative_mode_ ? "on" : "off",
-        min_interval_ms_, downsample_step_);
+        min_interval_ms_, downsample_step_,
+        max_xy_distance_, max_z_above_, max_z_below_);
     }
   }
 
@@ -455,7 +462,7 @@ private:
     // Cancel any running planning, then wait for worker to release the planner
     cancel_planning_ = true;
     {
-      std::lock_guard<std::mutex> lock(planning_mutex_);
+      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
       // Worker releases mutex when A* exits (cancel flag checked every iteration)
     }
     cancel_planning_ = false;
@@ -622,7 +629,7 @@ private:
 
       std::vector<global_planner::PointPose> results;
       {
-        std::lock_guard<std::mutex> lock(planning_mutex_);
+        std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
         if (cancel_planning_.load()) continue;
 
         planner_->setCancelFlag(&cancel_planning_);
@@ -859,6 +866,22 @@ private:
     return dx * dx + dy * dy + dz * dz <= r2;
   }
 
+  // Filter points by XY distance and Z offset from robot.  A threshold of 0
+  // disables that axis (no filtering).  Used by on_online_cloud to discard
+  // distant / overhead / ground points before octree integration.
+  bool point_in_range(double px, double py, double pz,
+                      double sx, double sy, double sz) const
+  {
+    double dx = px - sx, dy = py - sy, dz = pz - sz;
+    if (max_xy_distance_ > 0.0 && (dx * dx + dy * dy) > max_xy_distance_ * max_xy_distance_)
+      return false;
+    if (max_z_above_ > 0.0 && dz > max_z_above_)
+      return false;
+    if (max_z_below_ > 0.0 && -dz > max_z_below_)
+      return false;
+    return true;
+  }
+
   void publish_occupied_cloud()
   {
     if (!octree_) return;
@@ -875,6 +898,11 @@ private:
       rcy = latest_odom_.pose.pose.position.y;
       rcz = latest_odom_.pose.pose.position.z;
     }
+
+    // ---- lock octree to prevent concurrent modification (on_online_cloud,
+    //       reanalyze) from changing leaves between the counting and filling
+    //       passes, which would cause iterator overflow → heap corruption ----
+    std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
 
     // Count points within radius
     size_t count = 0;
@@ -1015,7 +1043,7 @@ private:
     // ---- integrate into octree (serialised with reanalyze to prevent
     //       concurrent tree modification during leaf iteration) ----
     {
-      std::lock_guard<std::mutex> lock(planning_mutex_);
+      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
 
     if (use_raycasting_) {
       // Raycasting mode: cast rays from sensor to each point, clearing
@@ -1068,6 +1096,8 @@ private:
 
         double px = *iter_x, py = *iter_y, pz = *iter_z;
 
+        if (!point_in_range(px, py, pz, sensor_x, sensor_y, sensor_z)) continue;
+
         if (conservative) {
           pz -= conservative_dz;
         }
@@ -1093,7 +1123,7 @@ private:
     // Run in background to avoid blocking the spin thread for seconds
     // on large maps.  Serialised with planning via planning_mutex_.
     std::thread([this]() {
-      std::lock_guard<std::mutex> lock(planning_mutex_);
+      std::lock_guard<std::recursive_mutex> lock(planning_mutex_);
       if (!map_ready_) return;
       RCLCPP_INFO(get_logger(), "Online reanalyze triggered (background)...");
       planner_->reanalyze();
@@ -1150,11 +1180,14 @@ private:
   bool use_raycasting_{false};
   int min_interval_ms_{500};
   int downsample_step_{1};
+  double max_xy_distance_{0.0};
+  double max_z_above_{0.0};
+  double max_z_below_{0.0};
   rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
 
   // Persistent background worker — spin thread is never blocked
   std::thread worker_thread_;
-  std::mutex planning_mutex_;
+  std::recursive_mutex planning_mutex_;  // recursive: republish_all may be called while lock already held by reanalyze
   std::atomic<bool> cancel_planning_{false};
   std::condition_variable planning_cv_;
   std::mutex planning_cv_mutex_;
