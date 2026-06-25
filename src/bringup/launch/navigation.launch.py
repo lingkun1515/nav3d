@@ -55,6 +55,15 @@ def generate_launch_description():
                               description='Launch rosbridge WebSocket for Web UI'),
     ])
 
+    # map→odom static TF — /path 在 odom 帧，RViz2 需要此 TF 连到 map
+    ld.add_action(Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_to_odom_tf',
+        arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+        parameters=[{'use_sim_time': use_sim_time}],
+    ))
+
     # 1. octo_planner
     ld.add_action(Node(
         package='octo_planner',

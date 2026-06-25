@@ -611,7 +611,7 @@ private:
     if (autonomyMode_) {
       navigating_ = true;
     }
-    RCLCPP_INFO(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
+    RCLCPP_DEBUG(get_logger(), "Received planned path with %zu waypoints", planned_waypoints_.size());
   }
 
 
@@ -1098,8 +1098,8 @@ private:
           }
         }
         path.poses.resize(validCount);
-        path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
-        path.header.frame_id = "base_link";
+        path.header.stamp = get_clock()->now() - rclcpp::Duration(0, 50000000);
+        path.header.frame_id = "odom";
         pub_path_->publish(path);
 
 	        // Free paths visualization — publish in map frame to avoid pitch/roll tilt
@@ -1143,7 +1143,7 @@ private:
 
 	        sensor_msgs::msg::PointCloud2 freePaths2;
 	        pcl::toROSMsg(*freePaths_, freePaths2);
-	        freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+	        freePaths2.header.stamp = get_clock()->now() - rclcpp::Duration(0, 50000000);
 	        freePaths2.header.frame_id = "map";
 	        pub_free_paths_->publish(freePaths2);
 
@@ -1169,14 +1169,14 @@ private:
       path.poses[0].pose.position.x = 0;
       path.poses[0].pose.position.y = 0;
       path.poses[0].pose.position.z = 0;
-      path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+      path.header.stamp = get_clock()->now() - rclcpp::Duration(0, 50000000);
       path.header.frame_id = "base_link";
       pub_path_->publish(path);
 
 	      freePaths_->clear();
 	      sensor_msgs::msg::PointCloud2 freePaths2;
 	      pcl::toROSMsg(*freePaths_, freePaths2);
-	      freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime_ * 1e9));
+	      freePaths2.header.stamp = get_clock()->now() - rclcpp::Duration(0, 50000000);
 	      freePaths2.header.frame_id = "map";
 	      pub_free_paths_->publish(freePaths2);
     }
