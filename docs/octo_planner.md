@@ -106,17 +106,20 @@ PCD 中地面可能因采样稀疏出现空洞。groundInfill 在 **每一列** 
 
 ## 4. 可通行性分析
 
-`GlobalPlanner::setOctomap()` 和 `reanalyze()` 都会触发完整的场景分析流水线：
+`GlobalPlanner::setOctomap()` 和 `reanalyze()` 都会触发完整的场景分析流水线。在线更新期间通过 `rebuildFromSnapshot()` 入口，先持有 `octree_mutex_` 快照 `occupied_set_` 再释放锁，后续步骤只持 `derived_mutex_`：
 
 ```
-setOctomap() / reanalyze()
+setOctomap() / reanalyze() / rebuildFromSnapshot()
   │
-  ├──① rebuildPreblockedCells()    — 障碍物贴身空体素标记
-  ├──② rebuildDerivedLayers()      — 可通行体素提取
+  ├──⓪ 快照 occupied_set_ ← octree 叶子节点（仅 octree_mutex_）
+  ├──① rebuildPreblockedCells()    — 障碍物贴身空体素标记（查 occupied_set_）
+  ├──② rebuildDerivedLayers()      — 可通行体素提取（查 occupied_set_）
   ├──③ radicalInfill() (可选)      — 激进填充桥接
   ├──④ flattenTraversable() (可选) — 可通行面平滑
   └──⑤ rebuildPreblockedCostmap()  — 软代价地图构建
 ```
+
+> **`occupied_set_`** 是 A* 与点云写入解耦的核心：所有占据查询走快照，A* 不再持有 `octree_mutex_`，与 online cloud 零等待并发。详见 [11. 线程模型](#11-线程模型与锁设计)。
 
 ### 4.1 可通行体素提取（rebuildDerivedLayers）
 
@@ -376,24 +379,90 @@ A* 循环每轮检查 `cancel_flag_`。新规划请求到达时，ROS 节点设�
 
 ---
 
-## 11. 线程模型
+## 11. 线程模型与锁设计
+
+### 11.1 线程架构
 
 ```
-主线程 (spin):
+Spin 线程 (ROS 2 主循环):
   ├── 话题回调: on_start, on_goal, on_goal_pose, on_odom
-  ├── 在线更新: on_online_cloud (点云回调)
+  ├── 在线更新: on_online_cloud (Phase 1 ray-clearing + Phase 2 occupy)
   ├── 地图编辑: on_add_voxels, on_remove_voxels
-  ├── Timer: on_online_reanalyze (重分析)
-  └── Timer: replan_timer (定时重规划)
+  ├── Timer: replan_timer (每 1.5s → 通知 Worker)
+  └── Timer: online_update_timer (每 10s → 启动 detached reanalyze)
 
 Worker 线程 (planning_worker_loop):
-  └── 等待 condition_variable → makePlan() → getPlannerResults() → publish path
+  └── 等待 condition_variable → makePlan() → publish path
 
-在线重分析线程 (detached):
-  └── reanalyze() + republish_all() (运行在独立线程，避免阻塞 spin)
+Reanalyze detached 线程 (每次 on_online_reanalyze 新开):
+  ├── Phase A: 持有 octree_mutex_ → 快照 occupied_set_ → 释放 (~10ms)
+  ├── Phase B: 持有 derived_mutex_ → rebuildFromSnapshot() → 释放 (~1-5s)
+  └── Phase C: 持有双锁 → republish_all() → 释放 (~10ms)
 ```
 
-**同步**: `planning_mutex_` (`std::recursive_mutex`) 保护 OctoMap 的 A* 搜索和在线更新/重分析之间的互斥，防止同时读写树结构。
+### 11.2 锁设计
+
+两把 `std::mutex`，替代原来的一把 `recursive_mutex`：
+
+| 锁 | 保护对象 | 持有者 |
+|----|---------|--------|
+| `octree_mutex_` | `octree_` 树结构读写 | online cloud（写）、add/remove voxels（写）、reanalyze Phase A（快照读）、reanalyze Phase C（republish 读）、configure_planner（初始化写） |
+| `derived_mutex_` | `occupied_set_`, `traversable_cells_`, `preblocked_cells_`, `preblocked_costmap_` | A* Worker（读快照 + derived）、reanalyze Phase B（写 derived）、reanalyze Phase C（republish 读）、configure_planner（初始化写） |
+
+**锁序**: 需要同时持有时，始终先 `octree_mutex_` 后 `derived_mutex_`，避免死锁。
+
+### 11.3 Occupied 快照 —— A* 与点云解耦的关键
+
+A* 路径搜索中需要查询"某个体素是否被占据"来做碰撞检测和地面支撑检查。如果直接查 OctoMap 树（`octree_->search()`），就必须持有 `octree_mutex_`，与点云写入互斥。
+
+**方案**: `GlobalPlanner` 维护一个 `occupied_set_`（`unordered_set<GridIndex>`），由 reanalyze 从 OctoMap 叶子节点快照生成。A* 中所有占据查询（`isOccupiedCell`、`hasGroundSupport`、机器人碰撞检测）全部改为查 `occupied_set_`，不再碰 OctoMap。
+
+```
+reanalyze (每 10s):             A* 搜索 (实时):
+  octree 叶子 ──快照──→            occupied_set_
+  occupied_set_           ←────────── 读 ── isOccupiedCell()
+                            ←────── 读 ── hasGroundSupport()
+  traversable_cells_        ←────── 读 ── 碰撞检测
+  preblocked_cells_
+  preblocked_costmap_       ←────── 读 ── getPreblockedCost()
+```
+
+读/写分离：
+
+| 操作 | 读 octree | 写 octree | 读 occupied_set_ | 写 occupied_set_ |
+|------|----------|----------|------------------|------------------|
+| A* 搜索 | ✗ | ✗ | ✓ | ✗ |
+| Online cloud | ✗ | ✓ | ✗ | ✗ |
+| Reanalyze | ✓ (仅快照阶段) | ✗ | ✗ | ✓ (rebuildFromSnapshot) |
+
+### 11.4 并发效果
+
+```
+改造前 (1 把 recursive_mutex):
+  A* ────→ 点云阻塞，等 A* 完成
+  点云 ──→ A* 阻塞，等点云完成
+
+改造后 (2 把 mutex，快照解耦):
+  A* ────→ 点云零等待 ✓
+  点云 ──→ A* 零等待 ✓
+  reanalyze Phase A (~10ms) ──→ 点云等待（可接受）
+  reanalyze Phase B (~1-5s) ──→ A* 等待（可接受，10s 一次）
+```
+
+| 场景 | 改造前 | 改造后 |
+|------|--------|--------|
+| A* 运行中 → lidar 点云到达 | 阻塞，等 A* 完成 | **零等待，立即处理** |
+| lidar 点云处理中 → 新 goal 到达 | A* 被锁阻塞 | **A* 立即启动**（用快照） |
+| reanalyze 运行中 → lidar 点云 | 全程阻塞 | 只阻塞快照阶段 ~10ms |
+| reanalyze 运行中 → A* | 全程阻塞 | 阻塞 Phase B 重建阶段 ~1-5s |
+
+### 11.5 精度说明
+
+A* 使用的 `occupied_set_` 快照最旧 10 秒（reanalyze 周期），但：
+- Timer 每 1.5s 触发 A* 重规划，路径随快照刷新而更新
+- `online_update_period_s` 可调小加快快照刷新频率
+- 机器人移动缓慢，碰撞检测用稍旧的占据信息风险极低
+- 改造前 A* 阻塞点云 → 新障碍物无法及时入图 → 实际上比现在更差
 
 ---
 
@@ -481,6 +550,7 @@ Worker 线程 (planning_worker_loop):
 | `online_update_max_xy_distance` | double | `10.0` | XY 最大距离 |
 | `online_update_max_z_above` | double | `1.0` | 传感器上方最大高度 |
 | `online_update_max_z_below` | double | `5.0` | 传感器下方最大深度 |
+| `online_update_ray_clear_prob_miss` | double | `0.15` | 射线清空 miss 概率（越小清空越激进） |
 
 ---
 
