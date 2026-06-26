@@ -19,6 +19,13 @@ enum class StopMode
   None,
 };
 
+enum class RotateGatePhase
+{
+  Idle,
+  Rotating,
+  Waiting,
+};
+
 class Go2VelBridgeNode : public rclcpp::Node
 {
 public:
@@ -36,16 +43,16 @@ public:
     publish_rate_ = declare_parameter<double>("publish_rate", 50.0);
     max_linear_accel_ = declare_parameter<double>("max_linear_accel", 1.5);
     max_angular_accel_ = declare_parameter<double>("max_angular_accel", 3.0);
-    stationary_min_vyaw_ = declare_parameter<double>("stationary_min_vyaw", 0.35);
-    stationary_vyaw_gain_ = declare_parameter<double>("stationary_vyaw_gain", 4.0);
-    stationary_boost_max_in_ = declare_parameter<double>("stationary_boost_max_in", 0.25);
     forward_linear_threshold_ =
       declare_parameter<double>("forward_linear_threshold", 0.15);
     forward_angular_deadband_ =
       declare_parameter<double>("forward_angular_deadband", 0.12);
-    stationary_linear_threshold_ =
-      declare_parameter<double>("stationary_linear_threshold", 0.05);
-    turn_intent_threshold_ = declare_parameter<double>("turn_intent_threshold", 0.01);
+    wait_for_turn_settle_ = declare_parameter<bool>("wait_for_turn_settle", true);
+    turning_vyaw_threshold_ =
+      declare_parameter<double>("turning_vyaw_threshold", 0.12);
+    rotating_linear_threshold_ =
+      declare_parameter<double>("rotating_linear_threshold", 0.08);
+    settle_hold_time_ = declare_parameter<double>("settle_hold_time", 0.25);
     invert_angular_z_ = declare_parameter<bool>("invert_angular_z", false);
     stop_mode_ = parse_stop_mode(declare_parameter<std::string>("stop_mode", "zero_velocity"));
 
@@ -72,10 +79,10 @@ public:
     RCLCPP_INFO(
       get_logger(),
       "go2_vel_bridge v2: %s -> %s + debug %s (rate %.1f Hz, stop_mode %s, "
-      "stationary_min_vyaw %.2f, gain %.1f)",
+      "turn_settle %s hold %.2fs)",
       cmd_vel_topic_.c_str(), sport_request_topic_.c_str(), cmd_out_topic_.c_str(),
       publish_rate_, stop_mode_name(stop_mode_).c_str(),
-      stationary_min_vyaw_, stationary_vyaw_gain_);
+      wait_for_turn_settle_ ? "on" : "off", settle_hold_time_);
   }
 
 private:
@@ -124,7 +131,7 @@ private:
     return target;
   }
 
-  double apply_vyaw_boost(double vyaw, double vx) const
+  double apply_vyaw_filter(double vyaw, double vx)
   {
     const double abs_vyaw = std::abs(vyaw);
     const double abs_vx = std::abs(vx);
@@ -134,20 +141,65 @@ private:
       return 0.0;
     }
 
-    if (abs_vyaw <= turn_intent_threshold_) {
-      return vyaw;
-    }
-
-    // Stationary only: boost RPP arc dead-zone outputs (~0.12).
-    if (abs_vx <= stationary_linear_threshold_ && abs_vyaw < stationary_boost_max_in_) {
-      const double amplified = std::max(
-        stationary_min_vyaw_,
-        abs_vyaw * stationary_vyaw_gain_);
-      const double boosted = std::min(amplified, max_vyaw_);
-      return boosted * (vyaw >= 0.0 ? 1.0 : -1.0);
-    }
-
     return vyaw;
+  }
+
+  void reset_rotate_settle_state()
+  {
+    rotate_gate_phase_ = RotateGatePhase::Idle;
+    post_rotate_wait_elapsed_ = 0.0;
+  }
+
+  bool is_rotate_in_place(double vx, double target_vyaw) const
+  {
+    return std::abs(vx) < rotating_linear_threshold_ &&
+           std::abs(target_vyaw) >= turning_vyaw_threshold_;
+  }
+
+  // Idle -> Rotating (vx=0, vyaw passes) -> Waiting (full stop) -> Idle.
+  void gate_velocity_after_rotate(double & vx, double & vyaw)
+  {
+    if (!wait_for_turn_settle_) {
+      return;
+    }
+
+    const bool rotate_cmd = is_rotate_in_place(vx, vyaw);
+
+    if (rotate_gate_phase_ == RotateGatePhase::Idle) {
+      if (rotate_cmd) {
+        rotate_gate_phase_ = RotateGatePhase::Rotating;
+      }
+      if (rotate_gate_phase_ == RotateGatePhase::Rotating) {
+        vx = 0.0;
+      }
+      return;
+    }
+
+    if (rotate_gate_phase_ == RotateGatePhase::Rotating) {
+      vx = 0.0;
+      if (!rotate_cmd) {
+        rotate_gate_phase_ = RotateGatePhase::Waiting;
+        post_rotate_wait_elapsed_ = 0.0;
+        vx = 0.0;
+        vyaw = 0.0;
+      }
+      return;
+    }
+
+    // Waiting: hold full stop so RPP cannot keep commanding spin during settle.
+    vx = 0.0;
+    vyaw = 0.0;
+    post_rotate_wait_elapsed_ += dt_;
+
+    if (rotate_cmd) {
+      rotate_gate_phase_ = RotateGatePhase::Rotating;
+      post_rotate_wait_elapsed_ = 0.0;
+      return;
+    }
+
+    if (post_rotate_wait_elapsed_ >= settle_hold_time_) {
+      rotate_gate_phase_ = RotateGatePhase::Idle;
+    }
   }
 
   void on_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg)
@@ -159,9 +211,10 @@ private:
     timeout_logged_ = false;
   }
 
-  void compute_target(double & vx, double & vy, double & vyaw, bool cmd_fresh) const
+  void compute_target(double & vx, double & vy, double & vyaw, bool cmd_fresh)
   {
     if (!cmd_fresh) {
+      reset_rotate_settle_state();
       vx = 0.0;
       vy = 0.0;
       vyaw = 0.0;
@@ -172,7 +225,8 @@ private:
     vx = clamp_symmetric(latest_cmd_.linear.x, max_vx_);
     vy = clamp_symmetric(latest_cmd_.linear.y, max_vy_);
     vyaw = clamp_symmetric(vyaw, max_vyaw_);
-    vyaw = apply_vyaw_boost(vyaw, vx);
+    gate_velocity_after_rotate(vx, vyaw);
+    vyaw = apply_vyaw_filter(vyaw, vx);
   }
 
   void publish_cmd_out()
@@ -194,16 +248,10 @@ private:
     double target_vyaw = 0.0;
     compute_target(target_vx, target_vy, target_vyaw, cmd_fresh);
 
-
-    const double angular_accel = (std::abs(target_vx) <= stationary_linear_threshold_ &&
-      std::abs(target_vyaw) > turn_intent_threshold_) ?
-      max_angular_accel_ * 2.0 :
-      max_angular_accel_;
-
     if (stop_mode_ == StopMode::ZeroVelocity || cmd_fresh) {
       out_vx_ = approach(out_vx_, target_vx, max_linear_accel_ * dt_);
       out_vy_ = approach(out_vy_, target_vy, max_linear_accel_ * dt_);
-      out_vyaw_ = approach(out_vyaw_, target_vyaw, angular_accel * dt_);
+      out_vyaw_ = approach(out_vyaw_, target_vyaw, max_angular_accel_ * dt_);
 
       unitree_api::msg::Request req;
       make_move_request(
@@ -246,13 +294,14 @@ private:
   double publish_rate_;
   double max_linear_accel_;
   double max_angular_accel_;
-  double stationary_min_vyaw_;
-  double stationary_vyaw_gain_;
-  double stationary_boost_max_in_;
   double forward_linear_threshold_;
   double forward_angular_deadband_;
-  double stationary_linear_threshold_;
-  double turn_intent_threshold_;
+  bool wait_for_turn_settle_;
+  double turning_vyaw_threshold_;
+  double rotating_linear_threshold_;
+  double settle_hold_time_;
+  RotateGatePhase rotate_gate_phase_{RotateGatePhase::Idle};
+  double post_rotate_wait_elapsed_{0.0};
   double dt_;
   StopMode stop_mode_;
   bool invert_angular_z_;

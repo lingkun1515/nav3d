@@ -158,8 +158,8 @@ pathFollower:
     yawRateGain: 7.5
     stopYawRateGain: 7.5
     maxYawRate: 45.0
-    maxSpeed: 0.5
-    maxAccel: 1.0
+    maxSpeed: 0.1
+    maxAccel: 0.2
     switchTimeThre: 1.0
     dirDiffThre: 0.1
     omniDirGoalThre: 1.0

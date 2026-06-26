@@ -11,13 +11,12 @@ go2_vel_bridge:
     stop_mode: "zero_velocity"
     max_linear_accel: 1.5
     max_angular_accel: 3.0
-    # Stationary turn only (vx~0): boost RPP dead-zone vyaw (~0.12).
-    stationary_min_vyaw: 0.35
-    stationary_vyaw_gain: 4.0
-    stationary_boost_max_in: 0.25
-    stationary_linear_threshold: 0.05
-    # Forward (vx>=threshold): zero |vyaw| below deadband to avoid left-right weave.
+    # Straight-line: zero small vyaw while moving forward.
     forward_linear_threshold: 0.15
-    forward_angular_deadband: 0.12
-    turn_intent_threshold: 0.01
+    forward_angular_deadband: 0.03
+    # After in-place rotation: full stop (vx=0, vyaw=0) for settle_hold_time, then forward.
+    wait_for_turn_settle: true
+    turning_vyaw_threshold: 0.12
+    rotating_linear_threshold: 0.08
+    settle_hold_time: 0.25
     invert_angular_z: false
