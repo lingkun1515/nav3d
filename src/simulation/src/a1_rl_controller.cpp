@@ -149,6 +149,17 @@ void A1RLController::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr sdf) 
 
     tf_pub_ = ros_node_->create_publisher<tf2_msgs::msg::TFMessage>("/tf", 100);
 
+    // Optional suppression for SLAM mode (SLAM provides odom + TF)
+    if (sdf->HasElement("publish_odom")) {
+        publish_odom_ = sdf->GetElement("publish_odom")->Get<bool>();
+    }
+    if (sdf->HasElement("publish_tf")) {
+        publish_tf_ = sdf->GetElement("publish_tf")->Get<bool>();
+    }
+    RCLCPP_INFO_STREAM(rclcpp::get_logger("a1_rl_controller"),
+                       "odom_frame=" << odom_frame_id_ << " base_frame=" << robot_base_frame_
+                       << " publish_odom=" << publish_odom_ << " publish_tf=" << publish_tf_);
+
     // Reset timing
     stand_up_start_time_ = model_->GetWorld()->SimTime().Double();
     last_infer_time_ = model_->GetWorld()->SimTime();
@@ -412,23 +423,27 @@ void A1RLController::PublishState(const gazebo::common::Time& now) {
     odom.pose.covariance[7] = 0.01;
     odom.pose.covariance[14] = 0.01;
 
-    odom_pub_->publish(odom);
+    if (publish_odom_) {
+      odom_pub_->publish(odom);
+    }
 
-    // Broadcast TF: odom → base_footprint
-    geometry_msgs::msg::TransformStamped tf;
-    tf.header.stamp = ros_now;
-    tf.header.frame_id = odom_frame_id_;
-    tf.child_frame_id = robot_base_frame_;
-    tf.transform.translation.x = rel_pose.Pos().X();
-    tf.transform.translation.y = rel_pose.Pos().Y();
-    tf.transform.translation.z = rel_pose.Pos().Z();
-    tf.transform.rotation.w = rel_pose.Rot().W();
-    tf.transform.rotation.x = rel_pose.Rot().X();
-    tf.transform.rotation.y = rel_pose.Rot().Y();
-    tf.transform.rotation.z = rel_pose.Rot().Z();
-    auto tf_msg = std::make_unique<tf2_msgs::msg::TFMessage>();
-    tf_msg->transforms.push_back(tf);
-    tf_pub_->publish(std::move(tf_msg));
+    // Broadcast TF: odom → base_link
+    if (publish_tf_) {
+      geometry_msgs::msg::TransformStamped tf;
+      tf.header.stamp = ros_now;
+      tf.header.frame_id = odom_frame_id_;
+      tf.child_frame_id = robot_base_frame_;
+      tf.transform.translation.x = rel_pose.Pos().X();
+      tf.transform.translation.y = rel_pose.Pos().Y();
+      tf.transform.translation.z = rel_pose.Pos().Z();
+      tf.transform.rotation.w = rel_pose.Rot().W();
+      tf.transform.rotation.x = rel_pose.Rot().X();
+      tf.transform.rotation.y = rel_pose.Rot().Y();
+      tf.transform.rotation.z = rel_pose.Rot().Z();
+      auto tf_msg = std::make_unique<tf2_msgs::msg::TFMessage>();
+      tf_msg->transforms.push_back(tf);
+      tf_pub_->publish(std::move(tf_msg));
+    }
 
     // Publish joint states
     sensor_msgs::msg::JointState joint_state;

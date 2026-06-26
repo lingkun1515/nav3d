@@ -6,11 +6,9 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /TF1/Frames1
         - /LatticePlanner1
         - /LatticePlanner1/LocalPath1/Topic1
         - /Nav2CostmapPlanner1/LocalPath1
-        - /OctoMap1
       Splitter Ratio: 0.5
     Tree Height: 380
   - Class: rviz_common/Views
@@ -26,14 +24,56 @@ Visualization Manager:
       Frame Timeout: 3
       Frames:
         All Enabled: false
+        FL_calf:
+          Value: false
+        FL_foot:
+          Value: false
+        FL_hip:
+          Value: false
+        FL_thigh:
+          Value: false
+        FL_thigh_shoulder:
+          Value: false
+        FR_calf:
+          Value: false
+        FR_foot:
+          Value: false
+        FR_hip:
+          Value: false
+        FR_thigh:
+          Value: false
+        FR_thigh_shoulder:
+          Value: false
+        RL_calf:
+          Value: false
+        RL_foot:
+          Value: false
+        RL_hip:
+          Value: false
+        RL_thigh:
+          Value: false
+        RL_thigh_shoulder:
+          Value: false
+        RR_calf:
+          Value: false
+        RR_foot:
+          Value: false
+        RR_hip:
+          Value: false
+        RR_thigh:
+          Value: false
+        RR_thigh_shoulder:
+          Value: false
         base_link:
           Value: true
         livox_frame:
           Value: true
         map:
-          Value: true
+          Value: false
         odom:
-          Value: true
+          Value: false
+        trunk:
+          Value: false
       Marker Scale: 2
       Name: TF
       Show Arrows: true
@@ -44,7 +84,35 @@ Visualization Manager:
           odom:
             livox_frame:
               base_link:
-                {}
+                trunk:
+                  FL_hip:
+                    FL_thigh:
+                      FL_calf:
+                        FL_foot:
+                          {}
+                    FL_thigh_shoulder:
+                      {}
+                  FR_hip:
+                    FR_thigh:
+                      FR_calf:
+                        FR_foot:
+                          {}
+                    FR_thigh_shoulder:
+                      {}
+                  RL_hip:
+                    RL_thigh:
+                      RL_calf:
+                        RL_foot:
+                          {}
+                    RL_thigh_shoulder:
+                      {}
+                  RR_hip:
+                    RR_thigh:
+                      RR_calf:
+                        RR_foot:
+                          {}
+                    RR_thigh_shoulder:
+                      {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -87,7 +155,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: false
-      Enabled: true
+      Enabled: false
       Keep: 1
       Name: Odometry
       Position Tolerance: 0.10000000149011612
@@ -107,7 +175,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /odom
-      Value: true
+      Value: false
     - Alpha: 0.800000011920929
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -361,13 +429,13 @@ Visualization Manager:
       Length: 5
       Name: Axes
       Radius: 0.10000000149011612
-      Reference Frame: <Fixed Frame>
+      Reference Frame: livox_frame
       Value: true
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 3.4092869758605957
-        Min Value: -0.5145534873008728
+        Max Value: 8.615199089050293
+        Min Value: -0.3155081570148468
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -428,25 +496,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 52.297306060791016
+      Distance: 23.181503295898438
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -3.216766595840454
-        Y: -10.256752967834473
-        Z: -12.904047012329102
+        X: 2.411374807357788
+        Y: 1.9264277219772339
+        Z: -0.21140049397945404
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.3797966241836548
+      Pitch: 0.7847974896430969
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.6102077960968018
+      Yaw: 2.0152227878570557
     Saved: ~
 Window Geometry:
   Displays:

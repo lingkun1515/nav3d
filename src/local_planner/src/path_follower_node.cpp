@@ -1,6 +1,8 @@
 #include <cmath>
 #include <cstring>
 #include <chrono>
+#include <array>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 
@@ -14,6 +16,8 @@
 
 #include "tf2/transform_datatypes.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
 
 #ifdef SERIAL_ENABLED
 #include "serial/serial.h"
@@ -30,6 +34,11 @@ public:
   PathFollowerNode() : Node("pathFollower")
   {
     declare_parameters();
+
+    // TF buffer (always created; only used when use_global_path)
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
     setup_pub_sub();
 
     RCLCPP_INFO(get_logger(), "PathFollower initialization complete.");
@@ -85,6 +94,10 @@ private:
     declare_parameter("autonomySpeed", 1.0);
     declare_parameter("joyToSpeedDelay", 2.0);
     declare_parameter("cmdVelTimeout", 0.2);
+    // Global-path mode (bypass latticePlanner)
+    declare_parameter("use_global_path", false);
+    declare_parameter("waypoint_lookahead", 2.5);
+    declare_parameter("waypoint_tolerance", 0.5);
   }
 
   void setup_pub_sub()
@@ -95,9 +108,15 @@ private:
       "/state_estimation", qos,
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) { odometry_callback(msg); });
 
+    // Always subscribe to both — use_global_path is resolved at runtime
+    // (ROS 2 sets parameters after ctor, so we can't branch on it here).
     sub_path_ = create_subscription<nav_msgs::msg::Path>(
       "/path", qos,
       [this](nav_msgs::msg::Path::ConstSharedPtr msg) { path_callback(msg); });
+
+    sub_global_path_ = create_subscription<nav_msgs::msg::Path>(
+      "/planned_path", qos,
+      [this](nav_msgs::msg::Path::ConstSharedPtr msg) { global_path_callback(msg); });
 
     sub_joystick_ = create_subscription<sensor_msgs::msg::Joy>(
       "/joy", qos,
@@ -163,6 +182,10 @@ private:
     joy_to_speed_delay_ = get_parameter("joyToSpeedDelay").as_double();
     cmd_vel_timeout_ = get_parameter("cmdVelTimeout").as_double();
 
+    use_global_path_ = get_parameter("use_global_path").as_bool();
+    waypoint_lookahead_ = get_parameter("waypoint_lookahead").as_double();
+    waypoint_tolerance_ = get_parameter("waypoint_tolerance").as_double();
+
     if (autonomy_mode_) {
       joy_speed_ = autonomy_speed_ / max_speed_;
       if (joy_speed_ < 0) joy_speed_ = 0;
@@ -185,6 +208,7 @@ private:
     vehicle_x_ = odom->pose.pose.position.x;
     vehicle_y_ = odom->pose.pose.position.y;
     vehicle_z_ = odom->pose.pose.position.z;
+    odom_frame_id_ = odom->header.frame_id;
 
     if (use_incl_to_stop_) {
       double effective_thre = incl_thre_;
@@ -220,6 +244,34 @@ private:
     path_point_id_ = 0;
     path_init_ = true;
     last_path_time_ = now().seconds();
+  }
+
+  void global_path_callback(const nav_msgs::msg::Path::ConstSharedPtr path_in)
+  {
+    if (path_in->poses.empty()) {
+      global_waypoints_.clear();
+      current_wp_idx_ = 0;
+      navigating_ = false;
+      path_init_ = false;
+      RCLCPP_INFO(get_logger(), "Global path cleared.");
+      return;
+    }
+
+    global_waypoints_.clear();
+    for (const auto & pose : path_in->poses) {
+      global_waypoints_.push_back({{
+        pose.pose.position.x,
+        pose.pose.position.y,
+        pose.pose.position.z
+      }});
+    }
+
+    current_wp_idx_ = 0;
+    navigating_ = true;
+    path_init_ = true;
+    last_path_time_ = now().seconds();
+    RCLCPP_INFO(get_logger(), "Global path received: %zu waypoints.",
+                global_waypoints_.size());
   }
 
   void joystick_callback(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
@@ -280,6 +332,95 @@ private:
     l_block_  = (block->data >= 32);
   }
 
+  // ---- global-path helpers ----
+
+  /// Select the lookahead waypoint, advance reached ones, detect goal.
+  /// Returns true if we have a valid target; sets target_x/target_y in map frame.
+  bool select_global_waypoint(double & tgt_x, double & tgt_y,
+                              int & path_size, double & end_dist,
+                              double & target_dist)
+  {
+    if (!navigating_ || global_waypoints_.empty()) return false;
+
+    const size_t N = global_waypoints_.size();
+
+    // 1. Advance reached waypoints
+    while (current_wp_idx_ < N - 1) {
+      double wx = global_waypoints_[current_wp_idx_][0];
+      double wy = global_waypoints_[current_wp_idx_][1];
+      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      if (d < waypoint_tolerance_) {
+        current_wp_idx_++;
+      } else {
+        break;
+      }
+    }
+
+    // 2. Lookahead: find first waypoint beyond lookahead distance
+    size_t target_idx = current_wp_idx_;
+    for (size_t i = current_wp_idx_; i < N; i++) {
+      double wx = global_waypoints_[i][0];
+      double wy = global_waypoints_[i][1];
+      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      if (d > waypoint_lookahead_) {
+        target_idx = i;
+        break;
+      }
+      target_idx = i;
+    }
+
+    // 3. Rear guard: if target is behind vehicle in vehicle frame,
+    //    back-track to the farthest-forward waypoint still ahead.
+    {
+      double dx = global_waypoints_[target_idx][0] - vehicle_x_;
+      double dy = global_waypoints_[target_idx][1] - vehicle_y_;
+      double rel_x =  std::cos(vehicle_yaw_) * dx + std::sin(vehicle_yaw_) * dy;
+      // double rel_y = -std::sin(vehicle_yaw_) * dx + std::cos(vehicle_yaw_) * dy;
+
+      if (rel_x < 0.0 && target_idx > current_wp_idx_) {
+        for (int i = static_cast<int>(target_idx) - 1; i >= static_cast<int>(current_wp_idx_); i--) {
+          double dx2 = global_waypoints_[i][0] - vehicle_x_;
+          double dy2 = global_waypoints_[i][1] - vehicle_y_;
+          double rel_x2 = std::cos(vehicle_yaw_) * dx2 + std::sin(vehicle_yaw_) * dy2;
+          if (rel_x2 >= 0.0) {
+            target_idx = static_cast<size_t>(i);
+            break;
+          }
+        }
+      }
+    }
+
+    // 4. Goal reached detection
+    if (current_wp_idx_ >= N - 1) {
+      double wx = global_waypoints_.back()[0];
+      double wy = global_waypoints_.back()[1];
+      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      if (d < waypoint_tolerance_) {
+        navigating_ = false;
+        RCLCPP_INFO(get_logger(), "Global path goal reached.");
+        return false;
+      }
+    }
+
+    tgt_x = global_waypoints_[target_idx][0];
+    tgt_y = global_waypoints_[target_idx][1];
+
+    // End distance (to last waypoint)
+    double ex = global_waypoints_.back()[0] - vehicle_x_;
+    double ey = global_waypoints_.back()[1] - vehicle_y_;
+    end_dist = std::hypot(ex, ey);
+
+    // Distance to target
+    double tx = tgt_x - vehicle_x_;
+    double ty = tgt_y - vehicle_y_;
+    target_dist = std::hypot(tx, ty);
+
+    // Path "size" for control logic: > 1 means we have a target
+    path_size = static_cast<int>(N);
+
+    return true;
+  }
+
   // ---- main control loop (100 Hz) ----
 
   void process_loop()
@@ -288,38 +429,100 @@ private:
 
     if (!path_init_) return;
 
-    float vehicleXRel = std::cos(vehicle_yaw_rec_) * (vehicle_x_ - vehicle_x_rec_)
-                      + std::sin(vehicle_yaw_rec_) * (vehicle_y_ - vehicle_y_rec_);
-    float vehicleYRel = -std::sin(vehicle_yaw_rec_) * (vehicle_x_ - vehicle_x_rec_)
-                      + std::cos(vehicle_yaw_rec_) * (vehicle_y_ - vehicle_y_rec_);
-
-    int pathSize = path_.poses.size();
-    float endDisX = path_.poses[pathSize - 1].pose.position.x - vehicleXRel;
-    float endDisY = path_.poses[pathSize - 1].pose.position.y - vehicleYRel;
-    float endDis = std::sqrt(endDisX * endDisX + endDisY * endDisY);
-
     float disX, disY, dis;
-    while (path_point_id_ < pathSize - 1) {
+    float endDisX, endDisY, endDis;
+    int pathSize;
+    float dirDiff;
+
+    if (use_global_path_) {
+      // ---- Global-path mode: select waypoint + transform to vehicle frame ----
+      double tgt_x, tgt_y, end_dist, tgt_dist;
+      int wp_count;
+      if (!select_global_waypoint(tgt_x, tgt_y, wp_count, end_dist, tgt_dist)) {
+        // No valid target → stop
+        vehicle_speed_ = 0.0;
+        auto cmd_vel = geometry_msgs::msg::Twist();
+        cmd_vel.linear.x = 0;
+        cmd_vel.linear.y = 0;
+        cmd_vel.angular.z = 0;
+        pub_cmd_vel_->publish(cmd_vel);
+        return;
+      }
+
+      // Transform waypoint from map → base_link
+      double local_x = 0.0, local_y = 0.0;
+      try {
+        geometry_msgs::msg::TransformStamped tf = tf_buffer_->lookupTransform(
+          "base_link", "map", tf2::TimePointZero, tf2::durationFromSec(0.1));
+
+        geometry_msgs::msg::PointStamped p_in, p_out;
+        p_in.header.frame_id = "map";
+        p_in.header.stamp = tf.header.stamp;
+        p_in.point.x = tgt_x;
+        p_in.point.y = tgt_y;
+        p_in.point.z = 0.0;
+        tf2::doTransform(p_in, p_out, tf);
+        local_x = p_out.point.x;
+        local_y = p_out.point.y;
+      } catch (const tf2::TransformException & e) {
+        // Fall back: manual odometry-based transform
+        double dx = tgt_x - vehicle_x_;
+        double dy = tgt_y - vehicle_y_;
+        local_x =  std::cos(vehicle_yaw_) * dx + std::sin(vehicle_yaw_) * dy;
+        local_y = -std::sin(vehicle_yaw_) * dx + std::cos(vehicle_yaw_) * dy;
+      }
+
+      // Compute pure-pursuit params in vehicle frame
+      disX = static_cast<float>(local_x);
+      disY = static_cast<float>(local_y);
+      dis = std::sqrt(disX * disX + disY * disY);
+      endDis = static_cast<float>(end_dist);
+      pathSize = (dis > 0.01) ? 2 : 1;  // 2 = have valid target; 1 = at target → stop
+
+      // dirDiff sign convention: the common control law does -gain*dirDiff.
+      // atan2(disY,disX) gives the bearing to target in vehicle frame
+      // (positive=left).  To turn TOWARD the target we need +gain*bearing,
+      // so negate here so -gain*(-bearing) = +gain*bearing.
+      dirDiff = -std::atan2(disY, disX);
+      if (dirDiff > PI) dirDiff -= 2 * PI;
+      else if (dirDiff < -PI) dirDiff += 2 * PI;
+
+    } else {
+      // ---- Local path mode (existing logic) ----
+      float vehicleXRel = std::cos(vehicle_yaw_rec_) * (vehicle_x_ - vehicle_x_rec_)
+                        + std::sin(vehicle_yaw_rec_) * (vehicle_y_ - vehicle_y_rec_);
+      float vehicleYRel = -std::sin(vehicle_yaw_rec_) * (vehicle_x_ - vehicle_x_rec_)
+                        + std::cos(vehicle_yaw_rec_) * (vehicle_y_ - vehicle_y_rec_);
+
+      pathSize = static_cast<int>(path_.poses.size());
+      endDisX = path_.poses[pathSize - 1].pose.position.x - vehicleXRel;
+      endDisY = path_.poses[pathSize - 1].pose.position.y - vehicleYRel;
+      endDis = std::sqrt(endDisX * endDisX + endDisY * endDisY);
+
+      while (path_point_id_ < pathSize - 1) {
+        disX = path_.poses[path_point_id_].pose.position.x - vehicleXRel;
+        disY = path_.poses[path_point_id_].pose.position.y - vehicleYRel;
+        dis = std::sqrt(disX * disX + disY * disY);
+        if (dis < look_ahead_dis_) {
+          path_point_id_++;
+        } else {
+          break;
+        }
+      }
+
       disX = path_.poses[path_point_id_].pose.position.x - vehicleXRel;
       disY = path_.poses[path_point_id_].pose.position.y - vehicleYRel;
       dis = std::sqrt(disX * disX + disY * disY);
-      if (dis < look_ahead_dis_) {
-        path_point_id_++;
-      } else {
-        break;
-      }
+      float pathDir = std::atan2(disY, disX);
+
+      dirDiff = vehicle_yaw_ - vehicle_yaw_rec_ - pathDir;
+      if (dirDiff > PI) dirDiff -= 2 * PI;
+      else if (dirDiff < -PI) dirDiff += 2 * PI;
+      if (dirDiff > PI) dirDiff -= 2 * PI;
+      else if (dirDiff < -PI) dirDiff += 2 * PI;
     }
 
-    disX = path_.poses[path_point_id_].pose.position.x - vehicleXRel;
-    disY = path_.poses[path_point_id_].pose.position.y - vehicleYRel;
-    dis = std::sqrt(disX * disX + disY * disY);
-    float pathDir = std::atan2(disY, disX);
-
-    float dirDiff = vehicle_yaw_ - vehicle_yaw_rec_ - pathDir;
-    if (dirDiff > PI) dirDiff -= 2 * PI;
-    else if (dirDiff < -PI) dirDiff += 2 * PI;
-    if (dirDiff > PI) dirDiff -= 2 * PI;
-    else if (dirDiff < -PI) dirDiff += 2 * PI;
+    // ---- Common control logic (both modes) ----
 
     if (two_way_drive_) {
       double time = now().seconds();
@@ -361,12 +564,14 @@ private:
     }
 
     float joySpeed3 = joySpeed2;
-    if ((odom_time_ < slow_init_time_ + slow_time1_ && slow_init_time_ > 0) || slow_down_ == 1)
-      joySpeed3 *= slow_rate1_;
-    else if ((odom_time_ < slow_init_time_ + slow_time1_ + slow_time2_ && slow_init_time_ > 0) || slow_down_ == 2)
-      joySpeed3 *= slow_rate2_;
-    else if (slow_down_ == 3)
-      joySpeed3 *= slow_rate3_;
+    if (!use_global_path_) {
+      if ((odom_time_ < slow_init_time_ + slow_time1_ && slow_init_time_ > 0) || slow_down_ == 1)
+        joySpeed3 *= slow_rate1_;
+      else if ((odom_time_ < slow_init_time_ + slow_time1_ + slow_time2_ && slow_init_time_ > 0) || slow_down_ == 2)
+        joySpeed3 *= slow_rate2_;
+      else if (slow_down_ == 3)
+        joySpeed3 *= slow_rate3_;
+    }
 
     if ((std::abs(dirDiff) < dir_diff_thre_ ||
          (endDis < omni_dir_goal_thre_ && std::abs(dirDiff) < omni_dir_diff_thre_)) && dis > stop_dis_thre_) {
@@ -387,8 +592,11 @@ private:
 
     if (!manual_mode_ && path_init_) {
       double now_sec = now().seconds();
-      if (now_sec - odom_time_ > cmd_vel_timeout_ ||
-          now_sec - last_path_time_ > cmd_vel_timeout_) {
+      bool odom_stale = now_sec - odom_time_ > cmd_vel_timeout_;
+      bool path_stale = now_sec - last_path_time_ > cmd_vel_timeout_;
+      // Global path replans at ~0.67 Hz (replan_period_s=1.5); only
+      // apply the path-age timeout for the fast local /path channel.
+      if (odom_stale || (!use_global_path_ && path_stale)) {
         vehicle_speed_ = 0;
         vehicleYawRate = 0;
       }
@@ -409,7 +617,7 @@ private:
           cmd_vel.linear.x = vehicle_speed_;
         }
       } else {
-        if (omni_dir_goal_thre_ > 0 && use_side_avoid_) {
+        if (omni_dir_goal_thre_ > 0 && use_side_avoid_ && !use_global_path_) {
           if (vehicleYawRate < 0 && (bl_block_ || fr_block_)) {
             cmd_vel.angular.z = 0;
             if (bl_block_ && !r_block_) {
@@ -434,6 +642,24 @@ private:
         cmd_vel.angular.z = max_yaw_rate_ * PI / 180.0 * joy_manual_yaw_;
       }
 
+      // ---- diagnostic: throttled to ~2 Hz ----
+      {
+        static int dbg_skip = 0;
+        if (++dbg_skip >= 50) {
+          dbg_skip = 0;
+          RCLCPP_INFO(get_logger(),
+            "global=%d dDiff=%.3f dis=%.3f endDis=%.3f pSz=%d "
+            "vYaw=%.3f vSpd=%.3f jSpd2=%.3f stop=%d nav=%d "
+            "odom_age=%.3f path_age=%.3f "
+            "gain_stop=%.2f gain_move=%.2f maxYaw=%.2f maxAcc=%.2f",
+            use_global_path_, dirDiff, dis, endDis, pathSize,
+            vehicleYawRate, vehicle_speed_, joySpeed2,
+            safety_stop_, navigating_,
+            now().seconds() - odom_time_,
+            now().seconds() - last_path_time_,
+            stop_yaw_rate_gain_, yaw_rate_gain_, max_yaw_rate_, max_accel_);
+        }
+      }
       pub_cmd_vel_->publish(cmd_vel);
       pub_skip_count_ = pub_skip_num_;
 
@@ -509,6 +735,11 @@ private:
   double joy_to_speed_delay_{2.0};
   double cmd_vel_timeout_{0.2};
 
+  // Global-path mode
+  bool use_global_path_{false};
+  double waypoint_lookahead_{2.5};
+  double waypoint_tolerance_{0.5};
+
   // ---- state ----
   float joy_speed_{0}, joy_speed_raw_{0}, joy_yaw_{0};
   double last_path_time_{0};
@@ -536,6 +767,12 @@ private:
 
   nav_msgs::msg::Path path_;
 
+  // Global-path state
+  std::vector<std::array<double, 3>> global_waypoints_;
+  size_t current_wp_idx_{0};
+  bool navigating_{false};
+  std::string odom_frame_id_;
+
 #ifdef SERIAL_ENABLED
   serial::Serial motor_ctr_serial_;
   bool serial_open_{false};
@@ -545,6 +782,7 @@ private:
   // ---- pub/sub ----
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_path_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_global_path_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr sub_joystick_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_speed_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_stop_;
@@ -555,6 +793,10 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
 
   rclcpp::TimerBase::SharedPtr process_timer_;
+
+  // TF (used only in global-path mode)
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 };
 
 }  // namespace local_planner

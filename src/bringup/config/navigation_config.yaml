@@ -155,11 +155,11 @@ pathFollower:
     lookAheadDis: 0.5
 
     # Controller gains
-    yawRateGain: 7.5
-    stopYawRateGain: 7.5
+    yawRateGain: 2.5
+    stopYawRateGain: 2.5
     maxYawRate: 45.0
-    maxSpeed: 0.1
-    maxAccel: 0.2
+    maxSpeed: 1.0
+    maxAccel: 1.0
     switchTimeThre: 1.0
     dirDiffThre: 0.1
     omniDirGoalThre: 1.0
@@ -182,6 +182,11 @@ pathFollower:
     noRotAtStop: false
     noRotAtGoal: true
     cmdVelTimeout: 0.2
+
+    # Global-path mode (bypass latticePlanner, direct /planned_path → /cmd_vel)
+    use_global_path: true
+    waypoint_lookahead: 2.5
+    waypoint_tolerance: 0.5
 
     # Autonomy
     autonomyMode: true

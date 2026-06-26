@@ -70,17 +70,23 @@
 
 ### simulation — Gazebo 仿真
 
-差速驱动小车 URDF + Gazebo 插件（diff_drive + lidar + joint_states），发布 `/odom`、`/scan`、TF，接收 `/cmd_vel`。
+**两种模型：**
+
+| 模型 | 传感器 | 里程计 | TF |
+|------|--------|--------|-----|
+| **car** (差速小车) | LiDAR → `/lidar_points` (lidar_link) | diff_drive 插件 → `/odom` (frame_id=map) | map→base_footprint→base_link |
+| **a1** (四足机器人) | LiDAR → `/livox/lidar`, IMU → `/livox/imu` (livox_frame) | A1RLController → `/odom` (frame_id=odom)；slam_mode 时抑制 | 无 SLAM: odom→base_link→trunk→legs + base_link→livox_frame；SLAM: SLAM 提供全链 |
+
+**A1 slam_mode**：A1RLController 的 `publish_odom`/`publish_tf` 设为 false，SLAM（独立启动）提供 `/odom` + TF 全链 `map→odom→livox_frame→base_link`。LiDAR/IMU 位姿对齐实机（x=+0.15 前方, z=+0.13 上方, pitch=-15°）。
 
 离线脚本 `pcd_to_world.py` / `bt_to_world.py` 将地图转为 `.world` 文件（占据体素 → 贪婪合并 → SDF box）。launch 不动态生成世界。
-
-源码 `src/simulation/`，启动：`ros2 launch simulation gazebo.launch.py [world:=...] [robot_model:=car|a1]`。
 
 ### bringup — 启动配置
 
 纯配置包（无 C++/Python 节点），统一管理 launch 和 config：
-- `launch/navigation.launch.py` — 导航栈启动（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2）
-- `launch/slam.launch.py` — SLAM 启动（super_lio mapping/relocation + TF 补齐）
+- `launch/navigation.launch.py` — 完整导航栈（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2）
+- `launch/navigation_no_avoidance.launch.py` — 无避障导航（octo_planner + pathFollower `use_global_path:=true`，跳过 latticePlanner）
+- `launch/slam.launch.py` — SLAM 启动（super_lio mapping/relocation + TF 补齐 livox_frame→base_link + map→odom）
 - `config/navigation_config.yaml` — 导航栈统一参数（所有节点的 ros__parameters）
 
 ### web — 前端
@@ -90,6 +96,30 @@ Three.js + ROSBridge（`ws://localhost:9090`）。3D 体素渲染（占据/可�
 源码 `web/`，操作详见 [开发指南](development.md#web-ui)。
 
 ## 数据流
+
+### SLAM 闭环（A1 仿真 → SLAM → 导航）
+
+```
+Gazebo (A1)                    SLAM (super_lio)              导航栈
+  │── /livox/lidar ──────────────►│                             │
+  │── /livox/imu ────────────────►│                             │
+  │                                │── /odom ──────────────────►│ (latticePlanner + pathFollower)
+  │                                │── /lidar_points ──────────►│ (latticePlanner /registered_scan)
+  │                                │── TF: odom→livox_frame ──►│
+  │                                │                             │── /cmd_vel ──► A1RLController
+```
+
+TF 链：`robot_state_publisher: base_link→trunk→legs` + `slam.launch.py: map→odom(identity) + livox_frame→base_link(static)` + `SLAM: odom→livox_frame(dynamic)` → 完整单链 `map→odom→livox_frame→base_link→trunk→legs`
+
+### 无避障导航（跳过 latticePlanner）
+
+```
+octo_planner  /planned_path (map) → pathFollower (use_global_path)  /cmd_vel
+                                        │ TF: map→base_link
+                                        │ 航点管理 + pure pursuit
+```
+
+**pathFollower `use_global_path` 模式：** 订阅 `/planned_path`→TF 变换到 vehicle 帧→去 Z→2D pure pursuit。复用现有 turn-in-place 逻辑（|dirDiff|>0.1rad 时 speed=0 原地转向）。
 
 ### Web → 规划 → 控制闭环
 
@@ -131,11 +161,11 @@ Gazebo                          localPlanner              pathFollower
 
 | 帧 | 说明 | 来源 |
 |----|------|------|
-| `map` | 全局固定坐标系 | SLAM 输出 / octo_planner |
-| `odom` | 里程计坐标系 | Gazebo 真值 / SLAM remap |
-| `vehicle` | 机器人本体坐标系 | localPlanner 路径输出 |
-| `base_link` | 机器狗本体帧 | Web 前端 3D 模型定位 |
-| `base_footprint` | 足底投影 | 静态 TF（slam.launch.py 补齐） |
+| `map` | 全局固定坐标系 | SLAM 输出 / 静态 identity→odom |
+| `odom` | 里程计坐标系 | SLAM 动态 odom→livox_frame；无 SLAM 时 A1RLController odom→base_link |
+| `livox_frame` | LiDAR/IMU 传感器帧 | 不在 URDF 内；SLAM 模式由 slam.launch.py 发布 livox_frame→base_link，非 SLAM 模式由 gazebo.launch.py 发布 base_link→livox_frame |
+| `base_link` | 机器人本体根帧 | A1 URDF 根链接（无 base_footprint）；car URDF 中为 base_footprint 子帧 |
+| `trunk` | 机身物理中心 | URDF floating_base 固定关节（base_link 子帧） |
 
 ## 关键机制
 

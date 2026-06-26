@@ -54,7 +54,7 @@ def generate_launch_description():
 
     # ---- TF 桥接 ----
     # super_lio 发布 map→livox_frame (lio.global.imu_frame="livox_frame")。
-    # 这里补齐 livox_frame→base_link (雷达在机器人中心前方 0.13m, 俯角 15°)
+    # 这里补齐 livox_frame→base_link (雷达在本体前方 0.15m, 上方 0.13m, 俯角 15°)
     # 以及 map→odom (identity)，确保 TF 链完整，RViz2 能渲染 base_link 帧的 /path
     ld.add_action(Node(
         package='tf2_ros',
@@ -67,7 +67,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_livox_to_base_link',
-        arguments=['-0.13', '0', '0.0', '0', '-0.261799', '0',
+        arguments=['-0.10', '0', '-0.08', '0', '0.0', '0', 
                    'livox_frame', 'base_link'],
         parameters=[{'use_sim_time': use_sim_time}],
     ))

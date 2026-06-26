@@ -2,6 +2,9 @@
 
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+    <xacro:arg name="publish_odom" default="true"/>
+    <xacro:arg name="publish_tf" default="true"/>
+
     <!-- A1 RL Controller Plugin: handles 12-DOF locomotion + odom + joint_states + TF -->
     <gazebo>
         <plugin name="a1_rl_controller" filename="libA1RLController.so">
@@ -32,15 +35,22 @@
             <!-- cmd_vel timeout: zero velocity if no message received (default 0.5s) -->
             <cmdVelTimeout>0.5</cmdVelTimeout>
 
-            <!-- TF frames -->
+            <!-- TF frames (base_link = root, matches real robot) -->
             <odomFrameId>odom</odomFrameId>
-            <robotBaseFrame>base_footprint</robotBaseFrame>
+            <robotBaseFrame>base_link</robotBaseFrame>
+
+            <!-- When slam_mode, set these false so SLAM provides odom + TF -->
+            <publish_odom>$(arg publish_odom)</publish_odom>
+            <publish_tf>$(arg publish_tf)</publish_tf>
         </plugin>
     </gazebo>
 
-    <!-- IMU on trunk -->
-    <gazebo reference="imu_link">
+    <!-- IMU attached directly to trunk, publishes in livox_frame (matches real robot).
+         Position: co-located with LiDAR at x=+0.15 front, z=+0.13 above base_link,
+         pitch=-15° down.  SLAM extrinsic lidar→imu is trivial (~5 cm); ignored in sim. -->
+    <gazebo reference="trunk">
         <sensor type="imu" name="trunk_imu">
+            <pose>0.10 0 0.08 0 0.261799 0</pose>
             <always_on>true</always_on>
             <update_rate>1000</update_rate>
             <visualize>false</visualize>
@@ -88,30 +98,31 @@
             </imu>
             <plugin name="trunk_imu_plugin" filename="libgazebo_ros_imu_sensor.so">
                 <ros>
-                    <remapping>~/out:=trunk_imu</remapping>
+                    <remapping>~/out:=livox/imu</remapping>
                 </ros>
                 <initial_orientation_as_reference>false</initial_orientation_as_reference>
-                <frame_name>imu_link</frame_name>
+                <frame_name>livox_frame</frame_name>
             </plugin>
         </sensor>
     </gazebo>
 
-    <!-- 3D LiDAR (front-mounted, 10° downward pitch, same config as car) -->
-    <gazebo reference="lidar_link">
+    <!-- 3D LiDAR attached to trunk (x=+0.15 front, z=+0.13 above, pitch=-15° down).
+         Matches real-robot livox_frame → base_link static TF in slam.launch.py. -->
+    <gazebo reference="trunk">
         <sensor type="gpu_ray" name="lidar_3d">
-            <pose>0 0 0 0 0 0</pose>
+            <pose>0.10 0 0.08 0 0.261799 0</pose>
             <visualize>false</visualize>
             <update_rate>10</update_rate>
             <ray>
                 <scan>
                     <horizontal>
-                        <samples>360</samples>
+                        <samples>720</samples>
                         <resolution>1</resolution>
                         <min_angle>-3.14159</min_angle>
                         <max_angle>3.14159</max_angle>
                     </horizontal>
                     <vertical>
-                        <samples>20</samples>
+                        <samples>28</samples>
                         <min_angle>-0.122173</min_angle>
                         <max_angle>0.907571</max_angle>
                     </vertical>
@@ -124,10 +135,10 @@
             </ray>
             <plugin name="lidar_3d_plugin" filename="libgazebo_ros_ray_sensor.so">
                 <ros>
-                    <remapping>~/out:=lidar_points</remapping>
+                    <remapping>~/out:=livox/lidar</remapping>
                 </ros>
                 <output_type>sensor_msgs/PointCloud2</output_type>
-                <frame_name>lidar_link</frame_name>
+                <frame_name>livox_frame</frame_name>
             </plugin>
         </sensor>
     </gazebo>

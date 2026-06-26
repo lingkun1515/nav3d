@@ -2,7 +2,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
                             SetEnvironmentVariable)
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, Command, PythonExpression
 from launch_ros.actions import Node
@@ -17,6 +17,7 @@ def generate_launch_description():
     world_file = LaunchConfiguration('world')
     use_sim_time = LaunchConfiguration('use_sim_time')
     robot_model = LaunchConfiguration('robot_model')
+    slam_mode = LaunchConfiguration('slam_mode')
     worlds_dir = os.path.join(pkg_share, 'worlds')
 
     # Local models directory
@@ -38,7 +39,20 @@ def generate_launch_description():
         '"', urdf_file_car, '" if "', robot_model, '" == "car" else "', urdf_file_a1, '"'
     ])
 
-    robot_description = ParameterValue(Command(['xacro ', urdf_expr]), value_type=str)
+    # In SLAM mode, suppress A1RLController's odom + TF (SLAM provides both).
+    # xacro args are only consumed by a1 URDF; car URDF ignores them silently.
+    publish_odom_val = PythonExpression([
+        '"false" if "', slam_mode, '" == "true" else "true"'
+    ])
+    publish_tf_val = PythonExpression([
+        '"false" if "', slam_mode, '" == "true" else "true"'
+    ])
+
+    robot_description = ParameterValue(Command([
+        'xacro ', urdf_expr,
+        ' publish_odom:=', publish_odom_val,
+        ' publish_tf:=', publish_tf_val,
+    ]), value_type=str)
 
     # Plugin path: our custom plugin dir (A1RLController.so) + stock gazebo_ros
     # + system defaults. The simulation package.xml also exports
@@ -90,7 +104,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             'world',
-            default_value=os.path.join(pkg_share, 'worlds', 
+            default_value=os.path.join(pkg_share, 'worlds',
                                        'urban2_story.world'
                                     #    'empty_world.world'
                                     #    'map_nav3d.world'
@@ -106,6 +120,12 @@ def generate_launch_description():
             'robot_model',
             default_value='a1',
             description='Robot model: car or a1'
+        ),
+        DeclareLaunchArgument(
+            'slam_mode',
+            default_value='false',
+            description='SLAM mode: suppress onboard odom/TF so SLAM provides them.'
+                        ' launch slam.launch.py separately.'
         ),
         DeclareLaunchArgument(
             'x', default_value='0.0', description='Robot initial X position'
@@ -133,7 +153,7 @@ def generate_launch_description():
             launch_arguments={'world': world_file}.items(),
         ),
 
-        # Robot State Publisher
+        # Robot State Publisher (URDF static TFs: base_link → trunk → legs)
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
@@ -142,6 +162,27 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
             }],
             output='screen',
+        ),
+
+        # Non-SLAM mode: static TFs to bridge simulation → navigation
+        #   map → odom (identity): connects global frame to odometry frame
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='map_to_odom_tf',
+            arguments=['0', '0', '0', '0', '0', '0', 'map', 'odom'],
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=UnlessCondition(slam_mode),
+        ),
+        #   base_link → livox_frame: sensor frame (LiDAR at x=+0.15, z=+0.13, pitch=-15°)
+        Node(
+            package='tf2_ros',
+            executable='static_transform_publisher',
+            name='base_link_to_livox_tf',
+            arguments=['0.15', '0', '0.13', '0', '-0.261799', '0',
+                       'base_link', 'livox_frame'],
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=UnlessCondition(slam_mode),
         ),
 
         # Spawn robot in Gazebo

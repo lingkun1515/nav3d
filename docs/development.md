@@ -38,19 +38,43 @@ source install/setup.bash
 
 ## 运行仿真
 
-需要两个终端（各 `docker exec` 进入容器）：
+需要 2~3 个终端（各 `docker exec` 进入容器）：
+
+### 普通仿真（小车 / A1 无 SLAM）
 
 ```bash
-# 终端 1: Gazebo（默认 urban2_story.world，含楼梯/平台）
+# 终端 1: Gazebo（默认 urban2_story.world + a1）
 ros2 launch simulation gazebo.launch.py
-# 空地模式:
-ros2 launch simulation gazebo.launch.py world:=$(ros2 pkg prefix simulation)/share/simulation/worlds/empty.world
+# 空地 + 小车:
+ros2 launch simulation gazebo.launch.py robot_model:=car world:=$(ros2 pkg prefix simulation)/share/simulation/worlds/empty.world
 
 # 终端 2: 导航栈
 ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 ```
 
-Gazebo 启动参数：`robot_model:=car|a1`、`world:=...`、`x/y/z/yaw` 初始位姿。
+Gazebo 启动参数：`robot_model:=car|a1`、`slam_mode:=true|false`、`world:=...`、`x/y/z/yaw` 初始位姿。
+
+### 仿真 A1 + SLAM 闭环（与实机一致）
+
+```bash
+# 终端 1: Gazebo（slam_mode 抑制 A1RLController 里程计/TF）
+ros2 launch simulation gazebo.launch.py robot_model:=a1 slam_mode:=true
+
+# 终端 2: SLAM（订阅 /livox/lidar + /livox/imu）
+ros2 launch bringup slam.launch.py use_sim_time:=true
+
+# 终端 3: 导航栈
+ros2 launch bringup navigation.launch.py use_sim_time:=true launch_rosbridge:=true
+```
+
+### 无避障导航（跳过 latticePlanner）
+
+```bash
+# 终端 1: 仿真
+ros2 launch simulation gazebo.launch.py robot_model:=car
+# 终端 2: 无避障导航
+ros2 launch bringup navigation_no_avoidance.launch.py launch_rosbridge:=true
+```
 
 ## 运行实机
 
@@ -62,7 +86,7 @@ ros2 launch bringup slam.launch.py mode:=mapping
 ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 ```
 
-SLAM 已做话题/TF 适配（详见 `src/bringup/launch/slam.launch.py`），导航栈无需任何改动。
+LiDAR/IMU 传感器位姿及 TF 链已对齐（详见 `src/bringup/launch/slam.launch.py`），导航栈无需任何改动。
 
 ## Web UI
 

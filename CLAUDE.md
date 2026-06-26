@@ -83,11 +83,11 @@ void getPlannerResults(std::vector<PointPose>& results);
 ROS 2 package，提供仿真环境用于闭环导航调试。
 
 **核心能力：**
-- 差速驱动小车 URDF（Xacro），含 Gazebo 插件（diff_drive + lidar + joint_states）
-- 发布里程计真值（`/odom`）、TF（odom→base_footprint→base_link）、激光扫描（`/scan`）
-- 接受 `/cmd_vel`（Twist）控制小车移动
+- 两种机器人模型：差速驱动小车（car）和 A1 四足机器人（a1）
+- **A1 传感器对齐实机**：LiDAR/IMU 直接挂载 trunk，frame=`livox_frame`，话题 `/livox/lidar` + `/livox/imu`，位姿 x=+0.15（前方）/ z=+0.13（上方）/ pitch=-15°；slam_mode 下 A1RLController 抑制里程计/TF（`publish_odom:=false publish_tf:=false`）转由 SLAM 提供
+- **car**：差速驱动小车 URDF（Xacro），含 Gazebo 插件（diff_drive + lidar + joint_states），发布里程计真值（`/odom`）、TF、激光扫描（`/lidar_points`）
 - bt_to_world / pcd_to_world：离线脚本，将 `.bt`/`.pcd` 转为 Gazebo `.world`（读取占据体素 → 贪婪合并 → SDF box）。手动运行，生成结果放在 `worlds/map_nav3d.world`。launch 文件不再动态生成世界
-- nav\_bridge / waypoint\_follower 已删除：所有中继/控制逻辑已下沉到 localPlanner / pathFollower (C++)
+- nav_bridge / waypoint_follower 已删除：所有中继/控制逻辑已下沉到 localPlanner / pathFollower (C++)
 
 **启动方式：**
 ```bash
@@ -177,9 +177,11 @@ source install/setup.bash
 
 ## 坐标系约定
 
-- `map` — 全局固定坐标系（SLAM 输出）
-- `odom` — 里程计坐标系
-- `base_link` — 机器人本体坐标系
+- `map` — 全局固定坐标系（SLAM 输出 / 静态 identity→odom）
+- `odom` — 里程计坐标系（SLAM 动态发布 odom→livox_frame；无 SLAM 时由 A1RLController 发布 odom→base_link）
+- `livox_frame` — LiDAR/IMU 传感器帧（非 URDF 内，由 slam.launch.py / gazebo.launch.py 发布静态 TF 连接到 base_link）
+- `base_link` — 机器人本体根帧（A1 URDF 根链接，无 base_footprint）
+- `trunk` — 机身物理中心（base_link 子帧，通过 floating_base 固定关节连接）
 
 ## 开发原则
 
@@ -196,18 +198,36 @@ source install/setup.bash
 
 1. **Web 通信方案**：rosbridge WebSocket（`ws://localhost:9090`），使用 roslib.min.js 客户端库
 2. **地图管理**：octo_planner 支持多格式输入与自动 `.bt` 缓存（格式通过文件扩展名自动检测）；预处理脚本 `src/bringup/maps/map_preprocessor.py` 负责对齐/降采样/补全
-3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件），发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`（Twist）
+3. **仿真机器人**：差速驱动小车（Gazebo diff_drive 插件，发布 `/odom` + TF + `/scan`，接收 `/cmd_vel`）或 A1 四足（A1RLController + RL 策略，slam_mode 下抑制里程计/TF 转由 SLAM 提供，传感器对齐实机 livox_frame）
 
 ## 闭环导航测试
 
-### 启动命令
+### 方式 1：仿真 A1 + SLAM 闭环（与实机一致）
+
 ```bash
-# 仿真和导航栈需分开启动
+# 终端 1: Gazebo 仿真（slam_mode 抑制 A1RLController 的 /odom + TF）
+ros2 launch simulation gazebo.launch.py robot_model:=a1 slam_mode:=true
+# 按需指定 world 和初始位姿:
+# ros2 launch simulation gazebo.launch.py robot_model:=a1 slam_mode:=true world:=.../worlds/map_nav3d.world x:=1.0 y:=0.0 yaw:=1.57
 
+# 终端 2: SLAM（沿用实机 slam.launch.py，订阅 /livox/lidar + /livox/imu）
+ros2 launch bringup slam.launch.py use_sim_time:=true
+
+# 终端 3: 导航栈（订阅 SLAM 输出的 /odom + /lidar_points）
+ros2 launch bringup navigation.launch.py use_sim_time:=true launch_rosbridge:=true
+```
+
+**TF 链（SLAM 模式）：** `map → odom → livox_frame → base_link → trunk → legs`
+
+### 方式 2：普通仿真（小车 / A1 无 SLAM）
+
+```bash
 # 终端 1: Gazebo 仿真
-ros2 launch simulation gazebo.launch.py world:=.../worlds/map_nav3d.world
+ros2 launch simulation gazebo.launch.py robot_model:=car
+# 或 A1（无 SLAM，A1RLController 自行发布 /odom + TF）
+ros2 launch simulation gazebo.launch.py robot_model:=a1
 
-# 终端 2: 导航栈（octo_planner + latticePlanner + pathFollower + rosbridge + RViz2）
+# 终端 2: 导航栈
 ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 
 # 空地模式（无 world 文件）
@@ -218,6 +238,26 @@ ros2 launch bringup navigation.launch.py launch_rosbridge:=true
 ros2 launch bringup navigation.launch.py launch_rviz:=false launch_rosbridge:=true
 ```
 
-### 数据流
+### 方式 3：无避障导航（跳过 latticePlanner）
 
-详见 [docs/architecture.md](docs/architecture.md) 的话题对照表和数据流图。
+```bash
+# 终端 1: 仿真
+ros2 launch simulation gazebo.launch.py robot_model:=car
+# 终端 2: 无避障导航（pathFollower use_global_path:=true，直连 /planned_path）
+ros2 launch bringup navigation_no_avoidance.launch.py launch_rosbridge:=true
+```
+
+### 便捷脚本
+
+```bash
+# 仿真
+./scripts/simulation.sh "" a1 true          # A1 + SLAM 模式
+./scripts/simulation.sh empty.world car     # 空地 + 小车
+
+# SLAM
+./scripts/slam.sh mapping true              # 建图 + 仿真时间
+
+# 导航
+./scripts/navigation.sh default true true   # 完整导航
+./scripts/navigation.sh no_avoidance        # 无避障版
+```
