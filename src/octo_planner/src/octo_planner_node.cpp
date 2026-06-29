@@ -993,7 +993,7 @@ private:
         float log_odds = static_cast<float>(std::log(prob / (1.0 - prob)));
         bool conservative = get_parameter("online_update_conservative_mode").as_bool();
         double conservative_dz =
-          conservative ? 0.5 * octree_->getResolution() : 0.0;
+          conservative ? 1.0 * octree_->getResolution() : 0.0;
 
         sensor_msgs::PointCloud2ConstIterator<float> iter_x(cloud_map, "x");
         sensor_msgs::PointCloud2ConstIterator<float> iter_y(cloud_map, "y");

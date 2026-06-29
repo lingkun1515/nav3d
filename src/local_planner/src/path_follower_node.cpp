@@ -143,6 +143,7 @@ private:
       [this](std_msgs::msg::Int8::ConstSharedPtr msg) { sur_block_callback(msg); });
 
     pub_cmd_vel_ = create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", qos);
+    pub_nav_status_ = create_publisher<std_msgs::msg::Int8>("/navigation_status", qos);
   }
 
   void read_params()
@@ -252,26 +253,52 @@ private:
       global_waypoints_.clear();
       current_wp_idx_ = 0;
       navigating_ = false;
+      nav_status_ = 0;  // IDLE
       path_init_ = false;
       RCLCPP_INFO(get_logger(), "Global path cleared.");
       return;
     }
 
-    global_waypoints_.clear();
+    std::vector<std::array<double, 3>> new_wp;
+    new_wp.reserve(path_in->poses.size());
     for (const auto & pose : path_in->poses) {
-      global_waypoints_.push_back({{
+      new_wp.push_back({{
         pose.pose.position.x,
         pose.pose.position.y,
         pose.pose.position.z
       }});
     }
 
-    current_wp_idx_ = 0;
+    // Progress alignment: on each replan, snap current_wp_idx_ to the new path's
+    // closest waypoint to the vehicle (map frame) instead of resetting to 0.
+    // Resetting to 0 makes the lookahead target jump back to the path start every
+    // replan cycle (replan_period_s=5s), which couples with the speed gate and
+    // drives the forward-stop-forward oscillation. /odom is livox_frame in odom;
+    // resolve vehicle pose in map frame via TF for a correct distance comparison.
+    size_t start_idx = 0;
+    double mvx = vehicle_x_, mvy = vehicle_y_;
+    try {
+      geometry_msgs::msg::TransformStamped tf = tf_buffer_->lookupTransform(
+        "map", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.05));
+      mvx = tf.transform.translation.x;
+      mvy = tf.transform.translation.y;
+    } catch (const tf2::TransformException &) {
+      // fallback to odometry pose
+    }
+    double best_d = 1e9;
+    for (size_t i = 0; i < new_wp.size(); i++) {
+      double d = std::hypot(new_wp[i][0] - mvx, new_wp[i][1] - mvy);
+      if (d < best_d) { best_d = d; start_idx = i; }
+    }
+
+    global_waypoints_ = std::move(new_wp);
+    current_wp_idx_ = start_idx;
     navigating_ = true;
+    nav_status_ = 1;  // NAVIGATING
     path_init_ = true;
     last_path_time_ = now().seconds();
-    RCLCPP_INFO(get_logger(), "Global path received: %zu waypoints.",
-                global_waypoints_.size());
+    RCLCPP_INFO(get_logger(), "Global path received: %zu waypoints, start_idx=%zu.",
+                global_waypoints_.size(), current_wp_idx_);
   }
 
   void joystick_callback(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
@@ -315,6 +342,14 @@ private:
   void stop_navigation_callback(const std_msgs::msg::Bool::ConstSharedPtr msg)
   {
     safety_stop_ = msg->data ? 1 : 0;
+    if (msg->data) {
+      // Full abort: clear waypoints + navigation state
+      global_waypoints_.clear();
+      current_wp_idx_ = 0;
+      navigating_ = false;
+      path_init_ = false;
+      nav_status_ = 0;
+    }
   }
 
   void slow_down_callback(const std_msgs::msg::Int8::ConstSharedPtr slow)
@@ -342,13 +377,31 @@ private:
   {
     if (!navigating_ || global_waypoints_.empty()) return false;
 
+    // Vehicle pose in MAP frame. /odom carries livox_frame's pose in the odom
+    // frame; waypoints live in map frame. Mixing odom-frame vehicle coords with
+    // map-frame waypoints corrupts advance/lookahead distances and flips the
+    // target between near and far waypoints. Resolve base_link pose in map via TF.
+    double mvx = vehicle_x_, mvy = vehicle_y_, myaw = vehicle_yaw_;
+    try {
+      geometry_msgs::msg::TransformStamped tf = tf_buffer_->lookupTransform(
+        "map", "base_link", tf2::TimePointZero, tf2::durationFromSec(0.05));
+      mvx = tf.transform.translation.x;
+      mvy = tf.transform.translation.y;
+      tf2::Quaternion q(tf.transform.rotation.x, tf.transform.rotation.y,
+                        tf.transform.rotation.z, tf.transform.rotation.w);
+      double roll_ignore, pitch_ignore;
+      tf2::Matrix3x3(q).getRPY(roll_ignore, pitch_ignore, myaw);
+    } catch (const tf2::TransformException &) {
+      // fallback to odometry pose/yaw (livox in odom)
+    }
+
     const size_t N = global_waypoints_.size();
 
     // 1. Advance reached waypoints
     while (current_wp_idx_ < N - 1) {
       double wx = global_waypoints_[current_wp_idx_][0];
       double wy = global_waypoints_[current_wp_idx_][1];
-      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      double d = std::hypot(wx - mvx, wy - mvy);
       if (d < waypoint_tolerance_) {
         current_wp_idx_++;
       } else {
@@ -356,32 +409,34 @@ private:
       }
     }
 
-    // 2. Lookahead: find first waypoint beyond lookahead distance
+    // 2. Lookahead: find first waypoint beyond lookahead distance,
+    //    then skip further ahead to prevent target hovering too close.
     size_t target_idx = current_wp_idx_;
     for (size_t i = current_wp_idx_; i < N; i++) {
       double wx = global_waypoints_[i][0];
       double wy = global_waypoints_[i][1];
-      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      double d = std::hypot(wx - mvx, wy - mvy);
       if (d > waypoint_lookahead_) {
         target_idx = i;
         break;
       }
       target_idx = i;
     }
+    // Push target further ahead (clamped to last waypoint)
+    target_idx = std::min(target_idx + 3, N - 1);
 
     // 3. Rear guard: if target is behind vehicle in vehicle frame,
     //    back-track to the farthest-forward waypoint still ahead.
     {
-      double dx = global_waypoints_[target_idx][0] - vehicle_x_;
-      double dy = global_waypoints_[target_idx][1] - vehicle_y_;
-      double rel_x =  std::cos(vehicle_yaw_) * dx + std::sin(vehicle_yaw_) * dy;
-      // double rel_y = -std::sin(vehicle_yaw_) * dx + std::cos(vehicle_yaw_) * dy;
+      double dx = global_waypoints_[target_idx][0] - mvx;
+      double dy = global_waypoints_[target_idx][1] - mvy;
+      double rel_x =  std::cos(myaw) * dx + std::sin(myaw) * dy;
 
       if (rel_x < 0.0 && target_idx > current_wp_idx_) {
         for (int i = static_cast<int>(target_idx) - 1; i >= static_cast<int>(current_wp_idx_); i--) {
-          double dx2 = global_waypoints_[i][0] - vehicle_x_;
-          double dy2 = global_waypoints_[i][1] - vehicle_y_;
-          double rel_x2 = std::cos(vehicle_yaw_) * dx2 + std::sin(vehicle_yaw_) * dy2;
+          double dx2 = global_waypoints_[i][0] - mvx;
+          double dy2 = global_waypoints_[i][1] - mvy;
+          double rel_x2 = std::cos(myaw) * dx2 + std::sin(myaw) * dy2;
           if (rel_x2 >= 0.0) {
             target_idx = static_cast<size_t>(i);
             break;
@@ -394,9 +449,11 @@ private:
     if (current_wp_idx_ >= N - 1) {
       double wx = global_waypoints_.back()[0];
       double wy = global_waypoints_.back()[1];
-      double d = std::hypot(wx - vehicle_x_, wy - vehicle_y_);
+      double d = std::hypot(wx - mvx, wy - mvy);
       if (d < waypoint_tolerance_) {
         navigating_ = false;
+        nav_status_ = 2;  // GOAL_REACHED — fires next publish, then → IDLE
+        global_waypoints_.clear();
         RCLCPP_INFO(get_logger(), "Global path goal reached.");
         return false;
       }
@@ -406,13 +463,13 @@ private:
     tgt_y = global_waypoints_[target_idx][1];
 
     // End distance (to last waypoint)
-    double ex = global_waypoints_.back()[0] - vehicle_x_;
-    double ey = global_waypoints_.back()[1] - vehicle_y_;
+    double ex = global_waypoints_.back()[0] - mvx;
+    double ey = global_waypoints_.back()[1] - mvy;
     end_dist = std::hypot(ex, ey);
 
     // Distance to target
-    double tx = tgt_x - vehicle_x_;
-    double ty = tgt_y - vehicle_y_;
+    double tx = tgt_x - mvx;
+    double ty = tgt_y - mvy;
     target_dist = std::hypot(tx, ty);
 
     // Path "size" for control logic: > 1 means we have a target
@@ -427,7 +484,13 @@ private:
   {
     read_params();
 
-    if (!path_init_) return;
+    if (!path_init_) {
+      // Publish IDLE status even when not navigating
+      auto ns = std_msgs::msg::Int8();
+      ns.data = 0;
+      pub_nav_status_->publish(ns);
+      return;
+    }
 
     float disX, disY, dis;
     float endDisX, endDisY, endDis;
@@ -445,6 +508,10 @@ private:
         cmd_vel.linear.x = 0;
         cmd_vel.linear.y = 0;
         cmd_vel.angular.z = 0;
+        auto ns = std_msgs::msg::Int8();
+        ns.data = nav_status_;
+        pub_nav_status_->publish(ns);
+        if (nav_status_ == 2) nav_status_ = 0;
         pub_cmd_vel_->publish(cmd_vel);
         return;
       }
@@ -524,7 +591,9 @@ private:
 
     // ---- Common control logic (both modes) ----
 
-    if (two_way_drive_) {
+    // Global-path mode always drives forward (no reversing).
+    // Two-way drive only makes sense for the local lattice mode.
+    if (two_way_drive_ && !use_global_path_) {
       double time = now().seconds();
       if (std::abs(dirDiff) > PI / 2 && nav_fwd_ && time - switch_time_ > switch_time_thre_) {
         nav_fwd_ = false;
@@ -573,8 +642,11 @@ private:
         joySpeed3 *= slow_rate3_;
     }
 
-    if ((std::abs(dirDiff) < dir_diff_thre_ ||
-         (endDis < omni_dir_goal_thre_ && std::abs(dirDiff) < omni_dir_diff_thre_)) && dis > stop_dis_thre_) {
+    // Speed gate: only decelerate when target is behind or we're at stop distance.
+    // During active turning, maintain speed — yaw controller handles steering.
+    bool target_behind = std::abs(dirDiff) > PI * 0.55;  // ~100° — genuinely behind
+    bool at_stop = dis <= stop_dis_thre_;
+    if (!target_behind && !at_stop) {
       if (vehicle_speed_ < joySpeed3) vehicle_speed_ += max_accel_ / 100.0;
       else if (vehicle_speed_ > joySpeed3) vehicle_speed_ -= max_accel_ / 100.0;
     } else {
@@ -642,23 +714,33 @@ private:
         cmd_vel.angular.z = max_yaw_rate_ * PI / 180.0 * joy_manual_yaw_;
       }
 
-      // ---- diagnostic: throttled to ~2 Hz ----
+      // ---- diagnostic: throttled to ~5 Hz (ACTIVE for debugging) ----
       {
         static int dbg_skip = 0;
-        if (++dbg_skip >= 50) {
+        if (++dbg_skip >= 10) {
           dbg_skip = 0;
+          bool tgt_behind = std::abs(dirDiff) > PI * 0.55;
+          bool at_stop = dis <= stop_dis_thre_;
           RCLCPP_INFO(get_logger(),
-            "global=%d dDiff=%.3f dis=%.3f endDis=%.3f pSz=%d "
-            "vYaw=%.3f vSpd=%.3f jSpd2=%.3f stop=%d nav=%d "
-            "odom_age=%.3f path_age=%.3f "
-            "gain_stop=%.2f gain_move=%.2f maxYaw=%.2f maxAcc=%.2f",
-            use_global_path_, dirDiff, dis, endDis, pathSize,
-            vehicleYawRate, vehicle_speed_, joySpeed2,
-            safety_stop_, navigating_,
-            now().seconds() - odom_time_,
-            now().seconds() - last_path_time_,
-            stop_yaw_rate_gain_, yaw_rate_gain_, max_yaw_rate_, max_accel_);
+            "global=%d dDiff=%.3f(%.0fdeg) dis=%.3f endDis=%.3f pSz=%d "
+            "wpIdx=%zu/%zu nav=%d status=%d | "
+            "vYaw=%.3f vSpd=%.3f jSpd2=%.3f jSpd3=%.3f joy=%.3f | "
+            "tgtBehind=%d atStop=%d stop=%d slow=%d | "
+            "odom_age=%.3f path_age=%.3f",
+            use_global_path_ ? 1 : 0, dirDiff, dirDiff * 180.0 / PI, dis, endDis, pathSize,
+            current_wp_idx_, global_waypoints_.size(), navigating_ ? 1 : 0, nav_status_,
+            vehicleYawRate, vehicle_speed_, joySpeed2, joySpeed3, joy_speed_,
+            tgt_behind ? 1 : 0, at_stop ? 1 : 0, safety_stop_, slow_down_,
+            now().seconds() - odom_time_, now().seconds() - last_path_time_);
         }
+      }
+
+      // Publish navigation status (GOAL_REACHED → IDLE after one frame)
+      {
+        auto ns = std_msgs::msg::Int8();
+        ns.data = nav_status_;
+        pub_nav_status_->publish(ns);
+        if (nav_status_ == 2) nav_status_ = 0;
       }
       pub_cmd_vel_->publish(cmd_vel);
       pub_skip_count_ = pub_skip_num_;
@@ -772,6 +854,7 @@ private:
   size_t current_wp_idx_{0};
   bool navigating_{false};
   std::string odom_frame_id_;
+  int nav_status_{0};  // 0=IDLE 1=NAVIGATING 2=GOAL_REACHED→IDLE
 
 #ifdef SERIAL_ENABLED
   serial::Serial motor_ctr_serial_;
@@ -791,6 +874,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr sub_sur_block_;
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
+  rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr pub_nav_status_;
 
   rclcpp::TimerBase::SharedPtr process_timer_;
 

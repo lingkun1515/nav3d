@@ -8,8 +8,8 @@
 #   ./scripts/navigation.sh no_avoidance true true   # 无避障 + rosbridge + rviz
 
 MODE="${1:-no_avoidance}"
-ROSBRIDGE="${2:-true}"
-RVIZ="${3:-true}"
+ROSBRIDGE="${2:-false}"
+RVIZ="${3:-false}"
 
 if [ "$MODE" = "no_avoidance" ]; then
   CMD="source ~/.bashrc && ros2 launch bringup navigation_no_avoidance.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ"

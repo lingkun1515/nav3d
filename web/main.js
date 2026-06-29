@@ -254,7 +254,6 @@ function setOccupiedMarker(msg) {
       log(`占据层: 已刷新 — ${occupiedPointsBuf.length} 体素`, 'info');
     }
     updateMapProgress();
-    autoFrameCamera();
     occupiedRenderTimer = null;
   }, CHUNK_COLLECT_MS);
 }
@@ -600,9 +599,9 @@ function setPlannedPath(msg) {
 }
 
 // ===== Data Staleness =====
-const STALE_TF_MS = 3000;
+const STALE_ODOM_MS = 3000;
 let lastDataTime = {
-  tf: 0,
+  odom: 0,
   get now() { return performance.now(); }
 };
 
@@ -611,23 +610,35 @@ function markDataAge(key) { lastDataTime[key] = lastDataTime.now; }
 function checkStaleness() {
   const n = lastDataTime.now;
 
-  if (lastDataTime.tf > 0 && n - lastDataTime.tf > STALE_TF_MS) {
-    tfState.clear();
-    lastDataTime.tf = 0;
-    tfFirstReceived = false;
+  if (lastDataTime.odom > 0 && n - lastDataTime.odom > STALE_ODOM_MS) {
+    latestOdomPose = null;
+    lastDataTime.odom = 0;
     poseFirstReceived = false;
     updateRobotModel();
-    log('TF 数据超时，已清空位姿', 'warn');
+    log('里程计数据超时，已清空位姿', 'warn');
   }
 }
 
-// ===== TF System =====
+// ===== Robot Pose (from /odom, frame-agnostic) =====
+let latestOdomPose = null;
+
+function onOdom(msg) {
+  markDataAge('odom');
+  const p = msg.pose.pose.position;
+  const q = msg.pose.pose.orientation;
+  // extract yaw from quaternion
+  const siny = 2 * (q.w * q.z + q.x * q.y);
+  const cosy = 1 - 2 * (q.y * q.y + q.z * q.z);
+  latestOdomPose = { x: p.x, y: p.y, z: p.z, yaw: Math.atan2(siny, cosy) };
+}
+
+// ===== TF System (retained for potential other uses) =====
 let tfFirstReceived = false;
 function normalizeFrame(f) { return f.startsWith('/') ? f.slice(1) : f; }
 
 function storeTransform(msg) {
   if (!msg.transforms) return;
-  markDataAge('tf');
+  // markDataAge('tf');  // no longer used for pose
   for (const t of msg.transforms) {
     const parent = normalizeFrame(t.header.frame_id);
     const child = normalizeFrame(t.child_frame_id);
@@ -651,51 +662,7 @@ function quaternionToYaw(q) {
 
 let resolveRobotPoseDebounce = 0;
 function resolveRobotPose() {
-  // Try direct map -> base
-  for (const base of baseFrameCandidates) {
-    const tf = getTransform('map', base);
-    if (tf) {
-      const yaw = quaternionToYaw(tf.rotation);
-      return { x: tf.translation.x, y: tf.translation.y, z: tf.translation.z, yaw };
-    }
-  }
-
-  // Try chained: map -> odom -> base
-  const mapOdom = getTransform('map', 'odom');
-  if (mapOdom) {
-    for (const base of baseFrameCandidates) {
-      const odomBase = getTransform('odom', base);
-      if (!odomBase) continue;
-
-      const mapYaw = quaternionToYaw(mapOdom.rotation);
-      const bx = odomBase.translation.x;
-      const by = odomBase.translation.y;
-      const x = mapOdom.translation.x + Math.cos(mapYaw) * bx - Math.sin(mapYaw) * by;
-      const y = mapOdom.translation.y + Math.sin(mapYaw) * bx + Math.cos(mapYaw) * by;
-      const z = mapOdom.translation.z + odomBase.translation.z;
-      const yaw = mapYaw + quaternionToYaw(odomBase.rotation);
-      return { x, y, z, yaw };
-    }
-  }
-
-  // Fallback: no map frame, use odom -> base directly (sim-only setup)
-  for (const base of baseFrameCandidates) {
-    const tf = getTransform('odom', base);
-    if (tf) {
-      const yaw = quaternionToYaw(tf.rotation);
-      return { x: tf.translation.x, y: tf.translation.y, z: tf.translation.z, yaw };
-    }
-  }
-
-  // Debug: dump TF keys once every 60 frames (~1s)
-  if (resolveRobotPoseDebounce === 0) {
-    const keys = Array.from(tfState.keys()).filter(k => k.includes('odom') || k.includes('base')).sort();
-    console.warn('[resolveRobotPose] returning null. TF keys with odom/base:', keys);
-    console.warn('[resolveRobotPose] candidates tried:', baseFrameCandidates);
-  }
-  resolveRobotPoseDebounce = (resolveRobotPoseDebounce + 1) % 60;
-
-  return null;
+  return latestOdomPose;
 }
 
 let poseFirstReceived = false;
@@ -1164,14 +1131,13 @@ function setupTopics() {
     .subscribe(storeTransform);
   new ROSLIB.Topic({ ros, name: '/tf_static', messageType: 'tf2_msgs/TFMessage' })
     .subscribe(storeTransform);
+  new ROSLIB.Topic({ ros, name: '/odom', messageType: 'nav_msgs/Odometry' })
+    .subscribe(onOdom);
 
   // Service for manual map fetch
   requestMapService = new ROSLIB.Service({ ros, name: '/request_map', serviceType: 'std_srvs/Trigger' });
 
-  // Auto-fetch map data on connect (with small delay for rosbridge to wire subscriptions)
-  setTimeout(() => {
-    requestMap();
-  }, 500);
+  // Map fetch is manual only (via "更新地图" button)
 }
 
 function updateMapProgress() {

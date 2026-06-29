@@ -20,13 +20,14 @@ def generate_launch_description():
     slam_mode = LaunchConfiguration('slam_mode')
     worlds_dir = os.path.join(pkg_share, 'worlds')
 
-    # Local models directory
+    # Local models directory + system Gazebo models (sun etc.)
     models_dir = os.path.join(pkg_share, 'models')
+    system_models = '/usr/share/gazebo-11/models'
     existing_model_path = os.environ.get('GAZEBO_MODEL_PATH', '')
     if existing_model_path:
-        model_path = f'{worlds_dir}:{models_dir}:{existing_model_path}'
+        model_path = f'{worlds_dir}:{models_dir}:{system_models}:{existing_model_path}'
     else:
-        model_path = f'{worlds_dir}:{models_dir}'
+        model_path = f'{worlds_dir}:{models_dir}:{system_models}'
 
     # URDF selection: car or a1
     urdf_file_car = os.path.join(pkg_share, 'urdf', 'diff_drive_robot.urdf.xacro')
@@ -90,6 +91,7 @@ def generate_launch_description():
     ])
     spawn_yaw = LaunchConfiguration('yaw')
     launch_rosbridge = LaunchConfiguration('launch_rosbridge')
+    gui = LaunchConfiguration('gui')
     entity_name = PythonExpression([
         '"diff_drive_robot" if "', robot_model, '" == "car" else "a1"'
     ])
@@ -144,13 +146,17 @@ def generate_launch_description():
             'launch_rosbridge', default_value='true',
             description='Launch rosbridge WebSocket for Web UI'
         ),
+        DeclareLaunchArgument(
+            'gui', default_value='true',
+            description='Set to "false" to run Gazebo headless (no gzclient)'
+        ),
 
         # Launch Gazebo
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(gazebo_ros_share, 'launch', 'gazebo.launch.py')
             ),
-            launch_arguments={'world': world_file}.items(),
+            launch_arguments={'world': world_file, 'gui': gui}.items(),
         ),
 
         # Robot State Publisher (URDF static TFs: base_link → trunk → legs)
