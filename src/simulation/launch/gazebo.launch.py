@@ -22,12 +22,13 @@ def generate_launch_description():
 
     # Local models directory + system Gazebo models (sun etc.)
     models_dir = os.path.join(pkg_share, 'models')
+    hospital_models_dir = os.path.join(models_dir, 'hospital')
     system_models = '/usr/share/gazebo-11/models'
     existing_model_path = os.environ.get('GAZEBO_MODEL_PATH', '')
     if existing_model_path:
-        model_path = f'{worlds_dir}:{models_dir}:{system_models}:{existing_model_path}'
+        model_path = f'{worlds_dir}:{models_dir}:{hospital_models_dir}:{system_models}:{existing_model_path}'
     else:
-        model_path = f'{worlds_dir}:{models_dir}:{system_models}'
+        model_path = f'{worlds_dir}:{models_dir}:{hospital_models_dir}:{system_models}'
 
     # URDF selection: car or a1
     urdf_file_car = os.path.join(pkg_share, 'urdf', 'diff_drive_robot.urdf.xacro')
@@ -107,6 +108,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world',
             default_value=os.path.join(pkg_share, 'worlds',
+                                    #    'hospital_two_floors_stripped.world'
+                                    #    'hospital_two_floors.world'   # needs gazebo model downloads
                                        'urban2_story.world'
                                     #    'empty_world.world'
                                     #    'map_nav3d.world'

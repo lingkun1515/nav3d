@@ -2,10 +2,10 @@
 # 启动 Gazebo 仿真（在 dog3dnav-foxy 容器内）
 # 用法: ./scripts/simulation.sh [world] [model] [slam_mode] [x] [y] [yaw] [gui]
 # 示例:
-#   ./scripts/simulation.sh                          # 默认 urban2_story + a1 + SLAM 模式
+#   ./scripts/simulation.sh                          # 默认 hospital + a1 + SLAM，楼梯旁
 #   ./scripts/simulation.sh empty.world car false    # 空地 + 小车 + 非 SLAM
 #   ./scripts/simulation.sh "" a1 true               # a1 + SLAM 闭环模式
-#   ./scripts/simulation.sh "" a1 true 1.0 0.0 1.57  # 指定初始位姿
+#   ./scripts/simulation.sh "" a1 true 0 0 0         # 原点生成
 #   ./scripts/simulation.sh "" a1 true 0 0 0 false   # 无 GUI (headless))
 
 WORLD="${1:-}"
