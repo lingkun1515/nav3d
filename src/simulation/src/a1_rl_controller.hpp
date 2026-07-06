@@ -29,6 +29,7 @@ public:
 private:
     void OnUpdate(const gazebo::common::UpdateInfo& info);
     void CmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
+    double GetGroundHeight(double x, double y);
 
     void LoadPolicy(const std::string& path);
     void RefreshObservation();
@@ -68,9 +69,9 @@ private:
     // Timing
     gazebo::common::Time last_infer_time_;
     gazebo::common::Time last_publish_time_;
-    double infer_duration_ = 0.02;
-    double stand_up_duration_ = 0.5;
-    double stand_up_start_time_ = 0.0;
+   double infer_duration_ = 0.02;
+    double stand_up_duration_ = 2.0;
+   double stand_up_start_time_ = 0.0;
     double publish_duration_ = 0.005;  // 200Hz
 
     // Joint reindex: Gazebo order (FR,FL,RR,RL) → RL model order (FL,FR,RL,RR)
@@ -110,14 +111,21 @@ private:
     double cmd_vel_timeout_ = 0.5;
     double last_cmd_vel_time_ = 0.0;
 
-    // PD gains
-    double kp_stand_up_ = 40.0;
-    double kd_stand_up_ = 0.5;
-    double kp_rl_ = 80.0;
-    double kd_rl_ = 1.0;
+   // PD gains
+   double kp_stand_up_ = 200.0;
+   double kd_stand_up_ = 5.0;
+   double kp_rl_ = 80.0;
+   double kd_rl_ = 1.0;
 
     // Safety: max trunk tilt (radians)
     double max_tilt_ = 60.0 * 3.1415926535897931 / 180.0;
+
+   // Kinematic base mode: robot moves via SetWorldPose, bypassing physics balance.
+   ignition::math::Pose3d controlled_pose_;
+   gazebo::common::Time last_kinematic_time_;
+
+   // Terrain following: probe ground height at robot position
+   double standing_height_ = 0.3;  // height above ground
 };
 
 }  // namespace simulation

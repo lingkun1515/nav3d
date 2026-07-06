@@ -34,8 +34,8 @@ def generate_launch_description():
 
     # Maps bundled with bringup package
     maps_dir = os.path.join(bringup_share, 'maps')
-    map_bt = os.path.join(maps_dir, 'map_nav3d.bt')
-    map_pcd = os.path.join(maps_dir, 'map_nav3d.pcd')
+    map_bt = os.path.join(maps_dir, 'map.bt')
+    map_pcd = os.path.join(maps_dir, 'map.pcd')
     default_map = map_bt if os.path.exists(map_bt) else (
         map_pcd if os.path.exists(map_pcd) else '')
     if default_map:

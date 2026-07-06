@@ -108,9 +108,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'world',
             default_value=os.path.join(pkg_share, 'worlds',
+                                       'urban2_story.world'
                                     #    'hospital_two_floors_stripped.world'
                                     #    'hospital_two_floors.world'   # needs gazebo model downloads
-                                       'urban2_story.world'
                                     #    'empty_world.world'
                                     #    'map_nav3d.world'
                                        ),

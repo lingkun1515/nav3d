@@ -41,7 +41,7 @@ def generate_launch_description():
     slam_config = os.path.join(pkg_bringup, 'config', 'slam_config.yaml')
 
     ld = LaunchDescription([
-        DeclareLaunchArgument('mode', default_value='mapping',
+        DeclareLaunchArgument('mode', default_value='relocation',
                               description="SLAM 模式: 'mapping' (建图) 或 'relocation' (重定位)"),
         DeclareLaunchArgument('rviz', default_value='false',
                               description='启动 RViz2 可视化'),
@@ -67,7 +67,7 @@ def generate_launch_description():
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_tf_livox_to_base_link',
-        arguments=['-0.10', '0', '-0.08', '0', '0.0', '0', 
+        arguments=['-0.10', '0', '-0.08', '0', '-0.261799', '0', 
                    'livox_frame', 'base_link'],
         parameters=[{'use_sim_time': use_sim_time}],
     ))
