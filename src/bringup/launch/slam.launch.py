@@ -9,8 +9,7 @@ Dog3DNav SLAM 建图 / 重定位 启动文件 (bringup 统一入口)
   ros2 launch bringup slam.launch.py mode:=relocation
   ros2 launch bringup slam.launch.py mode:=relocation init_pose:="[1.0,0.0,0.0,0.0,0.0,0.0]"
 
-配置文件直接使用 super_lio 自带的 config/livox_360.yaml (建图)
-和 config/relocation.yaml (重定位)，不维护 bringup 侧副本。
+配置文件: bringup/config/slam_config.yaml (建图+重定位合并, 两模式共用)
 
 输出话题(已对导航栈做了适配 remap, 无需改动 navigation.launch.py):
   /odom            <- /lio/odom     (供 octo_planner / local_planner / pathFollower)
@@ -33,10 +32,9 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_slam = get_package_share_directory('super_lio')
+    pkg_bringup = get_package_share_directory('bringup')
 
-    # 直接使用 super_lio 自带配置
-    mapping_config = os.path.join(pkg_slam, 'config', 'livox_360.yaml')
-    reloc_config = os.path.join(pkg_slam, 'config', 'relocation.yaml')
+    slam_config = os.path.join(pkg_bringup, 'config', 'slam_config.yaml')
     rviz_config = os.path.join(pkg_slam, 'rviz', 'lio.rviz')
 
     # ---- 公共参数 ----
@@ -58,9 +56,6 @@ def generate_launch_description():
     ])
 
     # ---- TF 桥接 ----
-    # super_lio 发布 map->livox_frame (lio.global.imu_frame="livox_frame")。
-    # 补齐 livox_frame->base_link (雷达在本体前方 0.10m, 下方 0.08m, 俯角 15 deg)
-    # 以及 map->odom (identity)，确保 TF 链完整。
     ld.add_action(Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -78,33 +73,30 @@ def generate_launch_description():
     ))
 
     # ---- SLAM 节点 ----
-    # 通过 remap 把 lio 输出对齐导航栈输入:
-    #   /odom         <- /lio/odom        (octo_planner + local_planner + pathFollower)
-    #   /lidar_points <- /lio/cloud_world (latticePlanner 避障点云)
     slam_remaps = [
         ('/lio/odom', '/odom'),
         ('/lio/cloud_world', '/lidar_points'),
     ]
 
-    # mapping 模式: 建图 (使用 livox_360.yaml)
+    # mapping 模式: 建图
     ld.add_action(Node(
         package='super_lio',
         executable='super_lio_node',
         name='super_lio_node',
         output='screen',
-        parameters=[mapping_config,
+        parameters=[slam_config,
                     {'use_sim_time': use_sim_time}],
         remappings=slam_remaps,
         condition=IfCondition(PythonExpression(["'", mode, "' == 'mapping'"])),
     ))
 
-    # relocation 模式: 重定位 (使用 relocation.yaml, 需要已有地图)
+    # relocation 模式: 重定位 (需要已有地图, init_pose 由 launch 参数覆盖)
     ld.add_action(Node(
         package='super_lio',
         executable='relocation_node',
         name='relocation_node',
         output='screen',
-        parameters=[reloc_config,
+        parameters=[slam_config,
                     {'use_sim_time': use_sim_time},
                     {'lio.relocation.init_pose': init_pose}],
         remappings=slam_remaps,
