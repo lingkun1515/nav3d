@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 SLAM（在 dog3dnav-foxy 容器内）
+# 启动 SLAM（本机 ROS2 Humble）
 # 用法: ./scripts/slam.sh [mode] [use_sim_time]
 # 示例:
 #   ./scripts/slam.sh                    # 默认 mapping，真实时间
@@ -8,7 +8,10 @@
 
 MODE="${1:-mapping}"
 USE_SIM_TIME="${2:-true}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-CMD="source ~/.bashrc && ros2 launch bringup slam.launch.py mode:=$MODE use_sim_time:=$USE_SIM_TIME"
+source /opt/ros/humble/setup.bash
+source "$PROJECT_DIR/install/setup.bash"
 
-docker exec -it dog3dnav-foxy bash -i -c "$CMD"
+ros2 launch bringup slam.launch.py mode:=$MODE use_sim_time:=$USE_SIM_TIME

@@ -46,4 +46,4 @@ rm -f /tmp/launch_params_* 2>/dev/null
 ZOMBIES=$(ps -eo stat 2>/dev/null | grep -c "^Z" || echo 0)
 echo ""
 echo "  [cleanup] 完成。僵尸进程（历史残留，不影响运行）: $ZOMBIES"
-echo "  提示: 僵尸只能重启容器清零，不影响 ROS 2 运行"
+echo "  提示: 僵尸进程不影响 ROS 2 运行"

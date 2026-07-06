@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动导航栈（在 dog3dnav-foxy 容器内）
+# 启动导航栈（本机 ROS2 Humble）
 # 用法: ./scripts/navigation.sh [mode] [launch_rosbridge] [launch_rviz]
 # 示例:
 #   ./scripts/navigation.sh                         # 默认完整导航
@@ -10,11 +10,14 @@
 MODE="${1:-no_avoidance}"
 ROSBRIDGE="${2:-false}"
 RVIZ="${3:-false}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source /opt/ros/humble/setup.bash
+source "$PROJECT_DIR/install/setup.bash"
 
 if [ "$MODE" = "no_avoidance" ]; then
-  CMD="source ~/.bashrc && ros2 launch bringup navigation_no_avoidance.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ"
+  ros2 launch bringup navigation_no_avoidance.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ
 else
-  CMD="source ~/.bashrc && ros2 launch bringup navigation.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ"
+  ros2 launch bringup navigation.launch.py launch_rosbridge:=$ROSBRIDGE launch_rviz:=$RVIZ
 fi
-
-docker exec -it dog3dnav-foxy bash -i -c "$CMD"

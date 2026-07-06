@@ -1,11 +1,10 @@
 #!/bin/bash
 # Drive robot through hospital for SLAM mapping.
 # Each segment: publish cmd_vel at given rate for N seconds, then stop briefly.
-export ROS_DOMAIN_ID=0
-export FASTRTPS_BUILTIN_TRANSPORTS=UDPv4
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-source /opt/ros/foxy/setup.bash
-source /ros2_ws/install/setup.bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source /opt/ros/humble/setup.bash
+source "$PROJECT_DIR/install/setup.bash"
 
 SPEED=0.3
 TURN=0.3

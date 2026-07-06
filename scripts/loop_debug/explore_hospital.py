@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-import os
-os.environ.setdefault("FASTRTPS_BUILTIN_TRANSPORTS", "UDPv4")
 """Drive the A1 robot through hospital_two_floors_stripped for SLAM mapping.
 
 Uses cmd_vel to follow a waypoint path covering both floors via the ramp
