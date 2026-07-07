@@ -101,7 +101,14 @@ private:
     declare_parameter("octomap_publish_period_s", 1.0);
     declare_parameter("auto_publish_enabled", false);
     declare_parameter("auto_save_bt", true);
-    declare_parameter("world_xy_window_size_m", 24.0);
+
+    // Unified post-load crop box (axis-aligned, map/world frame).
+    // Applied to EVERY map format after load (.pcd/.bt/.ot/.world/.sdf, incl.
+    // .bt cache hits): occupied voxels outside the box are dropped.
+    // Disabled by default; crop_box_min must be < crop_box_max on each axis.
+    declare_parameter("crop_box_enabled", false);
+    declare_parameter("crop_box_min", std::vector<double>{0.0, 0.0, 0.0});
+    declare_parameter("crop_box_max", std::vector<double>{0.0, 0.0, 0.0});
 
     declare_parameter("online_update_enabled", false);
     declare_parameter("online_update_cloud_topic", "/livox/lidar");
@@ -283,29 +290,114 @@ private:
       std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     }
 
-    // For PCD/World sources, check if a .bt cache exists and is newer
+    // For PCD/World sources, check if a .bt cache exists and is newer.
+    // (The .bt cache stores the UNCROPPED map, so the crop box is re-applied
+    //  on every load — changing crop_box params takes effect immediately even
+    //  when a cache is present.)
+    bool used_cache = false;
     if (ext == ".pcd" || ext == ".world" || ext == ".sdf") {
       std::string cache_bt = replace_extension(file_path, ".bt");
       if (file_exists(cache_bt) && is_newer_than(cache_bt, file_path)) {
         RCLCPP_INFO(get_logger(), "Loading from .bt cache (newer than source): %s", cache_bt.c_str());
         load_bt_map(cache_bt);
+        used_cache = true;
+      }
+    }
+
+    if (!used_cache) {
+      if (ext == ".pcd") {
+        load_pcd_map(file_path);
+      } else if (ext == ".bt") {
+        load_bt_map(file_path);
+      } else if (ext == ".ot") {
+        load_ot_map(file_path);
+      } else if (ext == ".world" || ext == ".sdf") {
+        load_world_map(file_path);
+      } else {
+        RCLCPP_ERROR(get_logger(), "Unsupported map format: %s (supported: .pcd .bt .ot .world .sdf)",
+                     file_path.c_str());
         return;
       }
     }
 
-    if (ext == ".pcd") {
-      load_pcd_map(file_path);
-    } else if (ext == ".bt") {
-      load_bt_map(file_path);
-    } else if (ext == ".ot") {
-      load_ot_map(file_path);
-    } else if (ext == ".world" || ext == ".sdf") {
-      load_world_map(file_path);
-    } else {
-      RCLCPP_ERROR(get_logger(), "Unsupported map format: %s (supported: .pcd .bt .ot .world .sdf)",
-                   file_path.c_str());
+    if (!octree_) {
+      RCLCPP_ERROR(get_logger(), "Map load produced no octree: %s", file_path.c_str());
       return;
     }
+
+    // Unified crop + configure for every format (and .bt cache hits).
+    apply_crop_box();
+    configure_planner();
+  }
+
+  // Drop occupied voxels outside the axis-aligned crop box.  Rebuilds a fresh
+  // OcTree containing only in-box occupied cells, so it is fully agnostic to
+  // which loader produced octree_.  Pruned nodes (size > resolution) are
+  // decomposed into resolution cells — mirroring publish_occupied_markers() —
+  // so a large occupied block straddling the box boundary is cropped precisely.
+  void apply_crop_box()
+  {
+    if (!get_parameter("crop_box_enabled").as_bool()) return;
+    if (!octree_) return;
+
+    const auto mn = get_parameter("crop_box_min").as_double_array();
+    const auto mx = get_parameter("crop_box_max").as_double_array();
+    if (mn.size() < 3 || mx.size() < 3) {
+      RCLCPP_ERROR(get_logger(), "crop_box_min/max must each have 3 elements");
+      return;
+    }
+    const double minx = mn[0], miny = mn[1], minz = mn[2];
+    const double maxx = mx[0], maxy = mx[1], maxz = mx[2];
+    if (minx >= maxx || miny >= maxy || minz >= maxz) {
+      RCLCPP_ERROR(get_logger(), "crop_box invalid: min must be < max on each axis");
+      return;
+    }
+
+    const double res = octree_->getResolution();
+    const std::size_t before = octree_->getNumLeafNodes();
+
+    auto cropped = std::make_shared<octomap::OcTree>(res);
+
+    auto inside = [&](double x, double y, double z) {
+      return x >= minx && x <= maxx && y >= miny && y <= maxy && z >= minz && z <= maxz;
+    };
+
+    for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
+      if (!octree_->isNodeOccupied(*it)) continue;
+      const float log_odds = it->getLogOdds();
+      const double size = it.getSize();
+
+      if (size <= res * 1.001) {
+        const double x = it.getX(), y = it.getY(), z = it.getZ();
+        if (inside(x, y, z)) {
+          cropped->setNodeValue(x, y, z, log_odds);
+        }
+      } else {
+        // Pruned node: decompose into its constituent resolution cells.
+        const int n = static_cast<int>(std::round(size / res));
+        const double half = (static_cast<double>(n) - 1.0) * 0.5 * res;
+        const double cx = it.getX(), cy = it.getY(), cz = it.getZ();
+        for (int dx = 0; dx < n; ++dx) {
+          const double x = cx - half + dx * res;
+          for (int dy = 0; dy < n; ++dy) {
+            const double y = cy - half + dy * res;
+            for (int dz = 0; dz < n; ++dz) {
+              const double z = cz - half + dz * res;
+              if (inside(x, y, z)) {
+                cropped->setNodeValue(x, y, z, log_odds);
+              }
+            }
+          }
+        }
+      }
+    }
+    cropped->updateInnerOccupancy();
+
+    const std::size_t after = cropped->getNumLeafNodes();
+    octree_ = cropped;
+    RCLCPP_INFO(get_logger(),
+      "Crop box [x %.2f..%.2f, y %.2f..%.2f, z %.2f..%.2f]: leaves %zu -> %zu",
+      minx, maxx, miny, maxy, minz, maxz, before, after);
   }
 
   void load_bt_map(const std::string & file_path)
@@ -315,13 +407,14 @@ private:
       octree_ = std::make_shared<octomap::OcTree>(file_path);
     } catch (const std::exception & e) {
       RCLCPP_ERROR(get_logger(), "Failed to load .bt file: %s", e.what());
+      octree_.reset();
       return;
     }
     if (octree_->size() == 0) {
       RCLCPP_ERROR(get_logger(), "Loaded .bt but tree is empty: %s", file_path.c_str());
+      octree_.reset();
       return;
     }
-    configure_planner();
   }
 
   void load_ot_map(const std::string & file_path)
@@ -332,38 +425,57 @@ private:
       raw = octomap::AbstractOcTree::read(file_path);
     } catch (const std::exception & e) {
       RCLCPP_ERROR(get_logger(), "Failed to load .ot file: %s", e.what());
+      octree_.reset();
       return;
     }
     if (!raw) {
       RCLCPP_ERROR(get_logger(), "Failed to read .ot file: %s", file_path.c_str());
+      octree_.reset();
       return;
     }
     octomap::OcTree * ot = dynamic_cast<octomap::OcTree *>(raw);
     if (!ot) {
       RCLCPP_ERROR(get_logger(), ".ot file is not an OcTree (got: %s)", raw->getTreeType().c_str());
       delete raw;
+      octree_.reset();
       return;
     }
     octree_.reset(ot);
-    configure_planner();
   }
 
   void load_world_map(const std::string & file_path)
   {
     RCLCPP_INFO(get_logger(), "Loading .world/.sdf: %s", file_path.c_str());
-    double resolution = get_parameter("resolution").as_double();
-    double xy_win = get_parameter("world_xy_window_size_m").as_double();
+    const double resolution = get_parameter("resolution").as_double();
+
+    // Generation-time XY window derived from the unified crop box (when
+    // enabled) so far-away shapes are never voxelised.  The exact box (and Z
+    // bounds) are enforced afterwards by apply_crop_box().  Disabled => 0,
+    // i.e. generate the whole world, matching .pcd/.bt/.ot behaviour.
+    double xy_win = 0.0;
+    if (get_parameter("crop_box_enabled").as_bool()) {
+      const auto mn = get_parameter("crop_box_min").as_double_array();
+      const auto mx = get_parameter("crop_box_max").as_double_array();
+      if (mn.size() >= 3 && mx.size() >= 3) {
+        const double half = std::max({std::fabs(mn[0]), std::fabs(mx[0]),
+                                      std::fabs(mn[1]), std::fabs(mx[1])});
+        xy_win = 2.0 * half;
+      }
+    }
+
     try {
       octree_ = loadWorldToOctomap(file_path, resolution, xy_win);
     } catch (const std::exception & e) {
       RCLCPP_ERROR(get_logger(), "Failed to load world file: %s", e.what());
+      octree_.reset();
       return;
     }
     if (!octree_ || octree_->size() == 0) {
       RCLCPP_ERROR(get_logger(), "World file produced empty map: %s", file_path.c_str());
+      octree_.reset();
       return;
     }
-    configure_planner();
+    // Cache the UNCROPPED map; crop happens later in load_map_auto().
     save_bt_cache(file_path);
   }
 
@@ -387,16 +499,18 @@ private:
 
     if (!converter_->convert()) {
       RCLCPP_ERROR(get_logger(), "Failed to convert PCD file: %s", pcd_file.c_str());
+      octree_.reset();
       return;
     }
 
     octree_ = converter_->getOctomap();
     if (!octree_) {
       RCLCPP_ERROR(get_logger(), "OcTree is null after conversion.");
+      octree_.reset();
       return;
     }
 
-    configure_planner();
+    // Cache the UNCROPPED map; crop happens later in load_map_auto().
     save_bt_cache(pcd_file);
   }
 

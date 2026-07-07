@@ -8,9 +8,9 @@ Panels:
         - /Status1
         - /LatticePlanner1/LocalPath1/Topic1
         - /Nav2CostmapPlanner1/LocalPath1
-        - /OctoMap1
+        - /OctoMap1/CostCloud1
       Splitter Ratio: 0.5
-    Tree Height: 1385
+    Tree Height: 1270
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -355,7 +355,7 @@ Visualization Manager:
           Position Transformer: XYZ
           Selectable: false
           Size (Pixels): 3
-          Size (m): 0.10000000149011612
+          Size (m): 0.05000000074505806
           Style: Squares
           Topic:
             Depth: 5
@@ -379,8 +379,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 3.754911422729492
-        Min Value: -1.3994390964508057
+        Max Value: 3.9098503589630127
+        Min Value: -0.4017949104309082
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -445,25 +445,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 44.465065002441406
+      Distance: 57.522239685058594
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -10.179018020629883
-        Y: 5.013267517089844
-        Z: 1.1231878995895386
+        X: -8.408035278320312
+        Y: -7.016508102416992
+        Z: 3.3442933559417725
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9697991609573364
+      Pitch: 1.1997967958450317
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 1.3838636875152588
+      Yaw: 1.4788639545440674
     Saved: ~
 Window Geometry:
   Displays:
@@ -471,9 +471,9 @@ Window Geometry:
   Height: 1536
   Hide Left Dock: true
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd0000000100000000000001c7000005a6fc0200000002fb000000100044006900730070006c006100790073000000003d000005a6000000c900fffffffb0000000a005600690065007700730000000208000000c1000000a400ffffff000004e1000005a600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000100000000000001f700000564fc0200000002fb000000100044006900730070006c006100790073000000006e000005640000018200fffffffb0000000a005600690065007700730000000208000000c10000013200ffffff000004e10000056400000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Views:
     collapsed: false
   Width: 1249
   X: 1311
-  Y: 27
+  Y: 54

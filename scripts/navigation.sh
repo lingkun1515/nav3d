@@ -8,7 +8,7 @@
 #   ./scripts/navigation.sh no_avoidance true true   # 无避障 + rosbridge + rviz
 
 MODE="${1:-no_avoidance}"
-ROSBRIDGE="${2:-false}"
+ROSBRIDGE="${2:-true}"
 RVIZ="${3:-true}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

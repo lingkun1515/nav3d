@@ -64,6 +64,7 @@ def generate_launch_description():
     global_reloc = LaunchConfiguration('global_reloc')
     map_key_path = LaunchConfiguration('map_key_path')
     reloc_gate_publish = LaunchConfiguration('reloc_gate_publish')
+    reloc_strategy = LaunchConfiguration('reloc_strategy')
 
     ld = LaunchDescription([
         DeclareLaunchArgument('mode', default_value='relocation',
@@ -84,6 +85,10 @@ def generate_launch_description():
         DeclareLaunchArgument('reloc_gate_publish', default_value='true',
                               description='global_reloc 是否仅在时序一致性可靠时才发布 /initial_pose '
                                           '(true=等可靠位姿再让 super_lio 初始化, 推荐)'),
+        DeclareLaunchArgument('reloc_strategy', default_value='fast',
+                              description="global_reloc 粗匹配策略: 'fast' (~0.7s, BEV+法向yaw+GICP, "
+                                          "在线推荐—super_lio 自带 ICP 会精配), 'ndt_gicp' (~90s, 暴力 NDT "
+                                          "网格, 最高独立精度), 'bev' (~15s)"),
     ])
 
     # ---- TF 桥接 ----
@@ -160,6 +165,7 @@ def generate_launch_description():
             {'map_key_path': map_key_path},
             {'params_path': reloc_params},
             {'gate_publish': reloc_gate_publish},
+            {'coarse_strategy': reloc_strategy},
         ],
         condition=IfCondition(reloc_cond),
     ))

@@ -476,7 +476,9 @@ A* 使用的 `occupied_set_` 快照最旧 10 秒（reanalyze 周期），但：
 | `frame_id` | string | `"map"` | 全局坐标系 ID |
 | `resolution` | double | `0.2` | OctoMap 分辨率 (m) |
 | `auto_save_bt` | bool | `true` | 转换后自动保存 .bt 缓存 |
-| `world_xy_window_size_m` | double | `24.0` | World 加载 XY 裁剪窗口 |
+| `crop_box_enabled` | bool | `false` | 是否启用统一 box 裁剪（所有格式载入后） |
+| `crop_box_min` | double[3] | `[0,0,0]` | 裁剪盒最小角（map/world 系，x/y/z） |
+| `crop_box_max` | double[3] | `[0,0,0]` | 裁剪盒最大角（map/world 系，x/y/z） |
 
 ### 12.2 PCD 转换过滤
 

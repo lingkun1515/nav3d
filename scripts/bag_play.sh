@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # 未指定 bag 则默认用项目内 docker/rosbag/lidar_with_pc2
-DEFAULT_BAG="$PROJECT_DIR/docker/rosbag/lidar_with_pc2"
+DEFAULT_BAG="$PROJECT_DIR/rosbag/lidar_with_pc2"
 BAG="${1:-$DEFAULT_BAG}"
 LOOP="${2:-}"
 

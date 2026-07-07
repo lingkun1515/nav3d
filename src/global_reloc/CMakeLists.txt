@@ -28,6 +28,7 @@ option(GLOBAL_RELOC_BUILD_GUI "Build the reloc_gui demo (requires glfw3+ImGui)" 
 option(GLOBAL_RELOC_BUILD_TESTS "Build unit tests (requires gtest)" OFF)
 option(GLOBAL_RELOC_ENABLE_TBB "Use TBB backend for small_gicp parallelism" OFF)
 option(GLOBAL_RELOC_ENABLE_TEASER "Enable TEASER++ coarse matcher (optional)" OFF)
+option(GLOBAL_RELOC_BUILD_ROSBAG_TOOLS "Build bag_to_query/imu_yaw_delta (needs rosbag2_cpp; off — replay via `ros2 bag play` instead)" OFF)
 
 # --- small_gicp: bundled under third_party. NOT purely header-only — its
 # preprocess_points/align helpers are compiled into libsmall_gicp. We build it
@@ -149,8 +150,6 @@ if(GLOBAL_RELOC_BUILD_ROS)
   find_package(std_msgs REQUIRED)
   find_package(pcl_conversions REQUIRED)
 
-  find_package(rosbag2_cpp REQUIRED)
-
   add_executable(reloc_node src/ros/reloc_node.cpp)
   target_link_libraries(reloc_node global_reloc_lib)
   target_include_directories(reloc_node PRIVATE ${SMALL_GICP_INCLUDE_DIR})
@@ -158,20 +157,20 @@ if(GLOBAL_RELOC_BUILD_ROS)
     rclcpp sensor_msgs geometry_msgs std_msgs pcl_conversions)
   install(TARGETS reloc_node DESTINATION lib/${PROJECT_NAME})
 
-  # Offline bag -> query PCD extractor (dev/test tool). Links the reloc lib
-  # (PCL comes transitively via global_reloc_lib PUBLIC) + ROS bag/serialization.
-  add_executable(bag_to_query src/tools/bag_to_query.cpp)
-  target_link_libraries(bag_to_query global_reloc_lib)
-  target_include_directories(bag_to_query PRIVATE ${SMALL_GICP_INCLUDE_DIR})
-  ament_target_dependencies(bag_to_query
-    rclcpp rosbag2_cpp sensor_msgs std_msgs)
-
-  # Standalone IMU gyro yaw integrator (no rosbag2_py needed).
-  add_executable(imu_yaw_delta src/tools/imu_yaw_delta.cpp)
-  target_link_libraries(imu_yaw_delta global_reloc_lib)
-  ament_target_dependencies(imu_yaw_delta
-    rclcpp rosbag2_cpp sensor_msgs std_msgs)
-  install(TARGETS bag_to_query imu_yaw_delta DESTINATION lib/${PROJECT_NAME})
+  # Optional offline bag tools (need rosbag2_cpp). OFF by default — the ROS node
+  # reads live /livox/lidar and replay uses `ros2 bag play`, so programmatic bag
+  # access isn't needed. Enable with -DGLOBAL_RELOC_BUILD_ROSBAG_TOOLS=ON.
+  if(GLOBAL_RELOC_BUILD_ROSBAG_TOOLS)
+    find_package(rosbag2_cpp REQUIRED)
+    add_executable(bag_to_query src/tools/bag_to_query.cpp)
+    target_link_libraries(bag_to_query global_reloc_lib)
+    target_include_directories(bag_to_query PRIVATE ${SMALL_GICP_INCLUDE_DIR})
+    ament_target_dependencies(bag_to_query rclcpp rosbag2_cpp sensor_msgs std_msgs)
+    add_executable(imu_yaw_delta src/tools/imu_yaw_delta.cpp)
+    target_link_libraries(imu_yaw_delta global_reloc_lib)
+    ament_target_dependencies(imu_yaw_delta rclcpp rosbag2_cpp sensor_msgs std_msgs)
+    install(TARGETS bag_to_query imu_yaw_delta DESTINATION lib/${PROJECT_NAME})
+  endif()
   install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
 endif()
 

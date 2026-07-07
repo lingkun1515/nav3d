@@ -9,7 +9,7 @@
 #   ./scripts/slam.sh relocation false \
 #       global_reloc:=true map_key_path:=/tmp/reloc_map/map.gkey
 
-MODE="${1:-mapping}"
+MODE="${1:-relocation}"
 RVIZ="${2:-false}"
 [ $# -ge 1 ] && shift
 [ $# -ge 1 ] && shift

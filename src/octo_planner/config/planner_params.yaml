@@ -47,8 +47,15 @@ octo_planner_node:
 
     # Auto-save: cache converted octomap as .bt alongside source file
     auto_save_bt: true
-    # XY window for world/sdf loading (0 = no cropping)
-    world_xy_window_size_m: 24.0
+
+    # Unified post-load crop box (axis-aligned, map/world frame).
+    # Applied to EVERY format (.pcd/.bt/.ot/.world/.sdf, incl. .bt cache hits):
+    # occupied voxels outside the box are dropped after load. Disabled by
+    # default; when enabled, min must be < max on each axis. For .world/.sdf
+    # the box's XY footprint also bounds voxel generation.
+    crop_box_enabled: false
+    crop_box_min: [0.0, 0.0, 0.0]
+    crop_box_max: [0.0, 0.0, 0.0]
 
     # Online incremental OctoMap update from real-time point cloud
     online_update_enabled: true

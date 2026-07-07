@@ -1,6 +1,8 @@
 # Dog3DNav - 机器狗3D导航框架
 
-ROS 2 Foxy 工作空间（运行于 `dog3dnav-foxy` Docker 容器，Ubuntu 20.04 + CUDA 11.8），面向四足机器狗平台的3D导航系统。
+ROS 2 Humble 工作空间（运行于宿主机 Ubuntu + ROS 2 Humble），面向四足机器狗平台的3D导航系统。
+
+> 注：历史上有 `dog3dnav-foxy` Docker 容器（Foxy + Ubuntu 20.04 + CUDA 11.8），现已废弃；当前开发一律在宿主机 Humble 上进行。`docker/` 目录仅作历史保留。
 
 ## 项目架构
 
@@ -158,17 +160,16 @@ Git submodule，由外部仓库导入。当前状态：预留。
 
 ## 构建与运行
 
-所有开发在 Docker 容器 `dog3dnav-foxy` 中进行。宿主机目录 bind-mount 到容器 `/ros2_ws`，改代码容器内立即可见。
+所有开发在**宿主机**进行（ROS 2 Humble）。工作空间即仓库根目录 `Dog3DNav/`，改代码后重新 `colcon build` 即生效。
 
 ```bash
-# 进入容器
-docker exec -it dog3dnav-foxy bash
-source /opt/ros/foxy/setup.bash
+# 进入工作空间（仓库根目录）
+cd /path/to/Dog3DNav
+source /opt/ros/humble/setup.bash
 
 # 构建（首次或代码变更后）
-cd /ros2_ws
 colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
-# 注意：不要用 --symlink-install（容器内 symlink 路径不兼容）
+# 注意：不要用 --symlink-install（install 路径与运行期查找不兼容）
 
 source install/setup.bash
 ```
@@ -191,7 +192,7 @@ source install/setup.bash
 
 ## 关键文档
 
-- [docs/development.md](docs/development.md) — 容器构建、运行、调试全流程
+- [docs/development.md](docs/development.md) — 宿主机构建、运行、调试全流程
 - [docs/architecture.md](docs/architecture.md) — 系统架构、数据流、话题对照、关键机制
 
 ## 已确定设计决策

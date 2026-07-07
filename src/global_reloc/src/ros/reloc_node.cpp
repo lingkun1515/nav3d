@@ -50,6 +50,16 @@ class RelocNode : public rclcpp::Node {
         RCLCPP_WARN(this->get_logger(), "params load failed: %s", e.what());
       }
     }
+    // Optional ROS-param override for the coarse strategy (the loaded params file
+    // is the default). `fast` (~0.7 s, BEV+normal-yaw+GICP) is the right pick for
+    // the online integration — super_lio's own NDT/ICP refines the rough pose —
+    // while `ndt_gicp` (~90 s, brute-force NDT grid) maximizes standalone accuracy.
+    this->declare_parameter<std::string>("coarse_strategy", "");
+    std::string coarse_strategy = this->get_parameter("coarse_strategy").as_string();
+    if (!coarse_strategy.empty()) {
+      params.coarse_strategy = coarse_strategy;
+      RCLCPP_INFO(this->get_logger(), "coarse_strategy override: %s", coarse_strategy.c_str());
+    }
     if (map_key.empty()) {
       RCLCPP_ERROR(this->get_logger(), "map_key_path not set; exiting");
       throw std::runtime_error("map_key_path required");
@@ -156,8 +166,9 @@ class RelocNode : public rclcpp::Node {
     double cov = reliable ? 0.05 : 1.0;
     for (int i = 0; i < 6; ++i) out.pose.covariance[i * 6 + i] = cov;
     init_pose_pub_->publish(out);
-    RCLCPP_INFO(this->get_logger(), "reloc conf=%.3f%s score=%.3f t=[%.2f %.2f %.2f]",
-                r.confidence, reliable ? " RELIABLE" : "", r.score, t.x(), t.y(), t.z());
+    RCLCPP_INFO(this->get_logger(),
+                "[/initial_pose PUBLISHED] reliable=%d conf=%.3f score=%.3f cov=%.2f t=[%.2f %.2f %.2f]",
+                reliable ? 1 : 0, r.confidence, r.score, cov, t.x(), t.y(), t.z());
   }
 
   std::unique_ptr<Relocalizer> reloc_;
