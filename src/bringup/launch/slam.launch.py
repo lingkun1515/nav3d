@@ -14,10 +14,10 @@ global_reloc 估计的 /initial_pose 作为初始预估):
   # 1) 先用 global_reloc 的 build_map_cli 从 super_lio 的先验地图生成 .gkey
   #    (地图必须与 super_lio 加载的同一份 .pcd):
   #    build_map_cli --pcd src/slam/src/super_lio/map/map.pcd \
-  #                  --out /tmp/reloc_map --name map --voxel 0.4
+  #                  --out src/bringup/maps --name reloc_map --voxel 0.4
   # 2) 启动:
   ros2 launch bringup slam.launch.py mode:=relocation global_reloc:=true \
-      map_key_path:=/tmp/reloc_map/map.gkey
+      map_key_path:=src/bringup/maps/reloc_map.gkey
 
 配置文件: bringup/config/slam_config.yaml (建图+重定位合并, 两模式共用)
 
@@ -55,6 +55,7 @@ def generate_launch_description():
     slam_config = os.path.join(pkg_bringup, 'config', 'slam_config.yaml')
     reloc_params = os.path.join(pkg_reloc, 'config', 'params.yaml')
     rviz_config = os.path.join(pkg_slam, 'rviz', 'lio.rviz')
+    default_map_key = os.path.join(pkg_bringup, 'maps', 'reloc_map.gkey')
 
     # ---- 公共参数 ----
     mode = LaunchConfiguration('mode')
@@ -79,9 +80,9 @@ def generate_launch_description():
         DeclareLaunchArgument('global_reloc', default_value='false',
                               description="true=重定位时启用 global_reloc, super_lio 订阅 /initial_pose 作为初始预估 "
                                           "(需配合 map_key_path); false=用配置 init_pose (默认, 行为不变)"),
-        DeclareLaunchArgument('map_key_path', default_value='',
-                              description='global_reloc 的 .gkey 地图索引 (global_reloc:=true 时必填, '
-                                          '须与 super_lio 先验 .pcd 同源; 用 build_map_cli 生成)'),
+        DeclareLaunchArgument('map_key_path', default_value=default_map_key,
+                              description='global_reloc 的 .gkey 地图索引 (须与 super_lio 先验 .pcd 同源; '
+                                          '默认用 bringup/maps/reloc_map.gkey, ./scripts/test_reloc.sh build-map 生成)'),
         DeclareLaunchArgument('reloc_gate_publish', default_value='true',
                               description='global_reloc 是否仅在时序一致性可靠时才发布 /initial_pose '
                                           '(true=等可靠位姿再让 super_lio 初始化, 推荐)'),

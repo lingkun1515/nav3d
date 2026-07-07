@@ -42,6 +42,7 @@ rosbag/
 *.pcd
 *.bt
 *.ot
+*.bin
 src/simulation/worlds/map_nav3d.world
 src/simulation/onnxruntime
 # src/simulation/urdf
@@ -51,3 +52,5 @@ src/simulation/models/
 
 # Claude Code
 .claude/
+
+livox_ros_driver2/

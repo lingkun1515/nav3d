@@ -60,6 +60,12 @@ class RelocNode : public rclcpp::Node {
       params.coarse_strategy = coarse_strategy;
       RCLCPP_INFO(this->get_logger(), "coarse_strategy override: %s", coarse_strategy.c_str());
     }
+    // Tune accumulation for online freshness: fewer frames = less staleness.
+    // The params file default is now 10 / 1.0 s; override per-scenario from launch.
+    this->declare_parameter<int>("accumulate_frames", params.accumulate_frames);
+    this->declare_parameter<double>("accumulate_max_dt", params.accumulate_max_dt);
+    params.accumulate_frames = this->get_parameter("accumulate_frames").as_int();
+    params.accumulate_max_dt = this->get_parameter("accumulate_max_dt").as_double();
     if (map_key.empty()) {
       RCLCPP_ERROR(this->get_logger(), "map_key_path not set; exiting");
       throw std::runtime_error("map_key_path required");
