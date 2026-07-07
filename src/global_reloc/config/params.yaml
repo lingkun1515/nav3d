@@ -1,0 +1,66 @@
+# global_reloc algorithm parameters (library format, loaded by loadParamsFromFile).
+# Node I/O (topics, map path) is configured via ROS declare_parameter / launch args.
+
+global_reloc:
+  # ---- online cloud accumulation ----
+  # IMPORTANT: the query LiDAR scan is near-2D (a thin chest-height slice), so a
+  # short accumulation (~5 frames / 0.3 s) is geometrically ambiguous against the
+  # map's repetitive structure and reloc jumps between look-alikes. Accumulating
+  # ~2 s of scan yields a far more unique local cloud — this is the single most
+  # important robustness lever. Tune down only on hardware with little motion.
+  accumulate_frames: 30             # N frames to accumulate before running reloc (~2 s @ 15 Hz)
+  accumulate_max_dt: 2.5            # max accumulation window [s]
+  voxel_query_size: 0.3             # downsample resolution for the online query cloud [m]
+
+  # Coarse stage strategy. "bev" = deterministic BEV distance-transform yaw
+  # sweep (robust, default). "sacia" = legacy FPFH + SAC-IA (fragile on sparse
+  # Livox data; kept for comparison only).
+  coarse_strategy: ndt_gicp
+
+  feature:
+    normal_radius: 0.6              # [m]
+    fpfh_radius: 1.2                # [m], typically 2x normal_radius
+    num_threads: 0                  # 0 -> single-thread (embedded); >=1 fixed
+
+  coarse:
+    num_samples: 500                # SAC-IA random samples per iteration
+    min_sample_distance: 0.5        # min corr. distance for sampling [m]
+    max_iterations: 1000
+    max_corr_distance: 0.8          # inlier threshold for correspondence [m]
+    top_k: 5                        # keep top-K coarse hypotheses
+    ransac_inlier_threshold: 0.3    # [m] for getFitnessScore
+
+  bev:
+    resolution: 0.5                 # BEV grid cell size [m]
+    sigma: 0.35                     # likelihood-field Gaussian width [m]
+    yaw_step_deg: 2.0               # yaw sweep resolution [deg] (180 samples/rev)
+    top_k: 10                       # hypotheses carried into the fine GICP stage
+    dedup_trans: 1.0                # NMS translation distance between kept peaks [m]
+    dedup_rot_deg: 8.0              # NMS angular distance between kept peaks [deg]
+    min_score: 0.05                 # drop BEV peaks below this mean-likelihood
+    z_scan_step: 0.5                # coarse z-scan step [m] (BEV is z-invariant)
+    z_scan_range: 6.0               # coarse z-scan half range [m]
+    z_inlier_dist: 1.0              # NN inlier threshold for the z scan [m]
+    z_keep: 3                       # distinct z hypotheses per BEV peak (intensity picks the true floor)
+    z_dedup: 0.8                    # min separation [m] between kept z hypotheses
+    z_band: 1.0                     # [m] height-consistency band for BEV scoring
+    dir_band: 0.35                  # [rad] wall-direction consistency band (~20deg) for yaw disambiguation
+
+  fine:
+    voxel_size: 0.2                 # [m] both clouds downsampled to this before GICP
+    max_correspondence_distance: 1.0  # [m]
+    num_threads: 0
+    max_iterations: 50
+    convergence_eps: 1.0e-5
+    tight_threshold: 0.3            # [m] sharp correctness-signal inlier distance
+    intensity_tol: 0.18             # reflectance match tolerance (fraction of 0..255)
+
+  scoring:
+    min_inlier_ratio: 0.05          # relaxed — let candidates through, judge by tight only
+    min_tight_inlier_ratio: 0.05    # relaxed
+    gravity_align_tol: 0.15         # [rad] roll/pitch deviation from gravity tolerated
+    map_aabb_margin: 2.0            # [m] result must be within map AABB + margin
+
+  runtime:
+    auto_retrigger: true            # re-run reloc when tracking lost reported
+    reloc_cooldown: 3.0             # [s] min interval between reloc attempts

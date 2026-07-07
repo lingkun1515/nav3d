@@ -1,8 +1,10 @@
 #include "global_planner.h"
 
 #include <algorithm>
+#include <climits>
 #include <map>
 #include <utility>
+#include <chrono>
 
 namespace global_planner
 {
@@ -83,22 +85,51 @@ namespace global_planner
         octree_ = map;
         map_ready_ = true;
 
+        // Cache metric bounds once — isInsideMetricBounds() is called millions of times
+        octree_->getMetricMin(metric_min_x_, metric_min_y_, metric_min_z_);
+        octree_->getMetricMax(metric_max_x_, metric_max_y_, metric_max_z_);
+        cached_resolution_ = octree_->getResolution();
+
+        auto t0 = std::chrono::steady_clock::now();
         // Build occupied snapshot (cached for A*, avoids octree access during search)
         occupied_set_.clear();
         for (auto it = octree_->begin_leafs(); it != octree_->end_leafs(); ++it) {
             if (octree_->isNodeOccupied(*it))
-                occupied_set_.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
-        }
+               occupied_set_.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
+       }
+       auto t1 = std::chrono::steady_clock::now();
+        initGridLookup();
+       printf("[setOctomap] occupied_set: %zu (%.1f ms)\n", occupied_set_.size(),
+              std::chrono::duration<double, std::milli>(t1 - t0).count());
 
         rebuildPreblockedCells();
+        auto t2 = std::chrono::steady_clock::now();
+        printf("[setOctomap] rebuildPreblockedCells: %zu (%.1f ms)\n", preblocked_cells_.size(),
+               std::chrono::duration<double, std::milli>(t2 - t1).count());
+
         rebuildDerivedLayers();
+        auto t3 = std::chrono::steady_clock::now();
+        printf("[setOctomap] rebuildDerivedLayers: %zu (%.1f ms)\n", traversable_cells_.size(),
+               std::chrono::duration<double, std::milli>(t3 - t2).count());
+
         if (radical_infill_enabled_) {
           radicalInfill();
         }
+        auto t4 = std::chrono::steady_clock::now();
+        printf("[setOctomap] radicalInfill: (%.1f ms)\n",
+               std::chrono::duration<double, std::milli>(t4 - t3).count());
+
         if (flatten_enabled_) {
           flattenTraversable();
         }
+        auto t5 = std::chrono::steady_clock::now();
+        printf("[setOctomap] flattenTraversable: (%.1f ms)\n",
+               std::chrono::duration<double, std::milli>(t5 - t4).count());
+
         rebuildPreblockedCostmap();
+        auto t6 = std::chrono::steady_clock::now();
+        printf("[setOctomap] rebuildPreblockedCostmap: %zu (%.1f ms)\n", preblocked_costmap_.size(),
+               std::chrono::duration<double, std::milli>(t6 - t5).count());
     }
 
     void GlobalPlanner::rebuildFromSnapshot(
@@ -106,6 +137,7 @@ namespace global_planner
     {
         if (!octree_) return;
         occupied_set_ = occupied_set;
+        initGridLookup();
         rebuildPreblockedCells();
         rebuildDerivedLayers();
         if (radical_infill_enabled_) {
@@ -127,6 +159,7 @@ namespace global_planner
             if (octree_->isNodeOccupied(*it))
                 occupied_set_.insert(worldToGrid(it.getX(), it.getY(), it.getZ()));
         }
+        initGridLookup();
 
         rebuildPreblockedCells();
         rebuildDerivedLayers();
@@ -408,14 +441,14 @@ namespace global_planner
             if (isOccupiedCell(below_idx)) {
             break;
             }
-            if (preblocked_cells_.find(below_idx) != preblocked_cells_.end()) {
+            if (grid_lookup_.inBounds(below_idx) && grid_lookup_.testFlags(below_idx, FLAG_PREBLOCKED)) {
             return false;
             }
         }
         }
 
-        const octomap::point3d center = gridToWorld(idx);
-        const double r = octree_->getResolution();
+        // Direct grid arithmetic — avoid worldToGrid roundtrip (3 divisions per neighbor)
+        const double r = cached_resolution_;
         const int n = std::max(1, static_cast<int>(std::ceil(robot_radius / r)));
         const double radius_sq = robot_radius * robot_radius;
 
@@ -429,16 +462,15 @@ namespace global_planner
             if (dist_sq > radius_sq) {
                 continue;
             }
-            const octomap::point3d p(
-                center.x() + static_cast<float>(dx * r),
-                center.y() + static_cast<float>(dy * r),
-                center.z() + static_cast<float>(dz * r));
-            const GridIndex nearby_idx = worldToGrid(p.x(), p.y(), p.z());
-            if (preblocked_hard_obstacle_ &&
-                preblocked_cells_.find(nearby_idx) != preblocked_cells_.end()) {
+            const GridIndex nearby_idx{idx.x + dx, idx.y + dy, idx.z + dz};
+            if (!grid_lookup_.inBounds(nearby_idx)) {
                 return false;
             }
-            if (isOccupiedCell(nearby_idx)) {
+            if (preblocked_hard_obstacle_ &&
+                grid_lookup_.testFlags(nearby_idx, FLAG_PREBLOCKED)) {
+                return false;
+            }
+            if (grid_lookup_.testFlags(nearby_idx, FLAG_OCCUPIED)) {
                 return false;
             }
             }
@@ -467,6 +499,49 @@ namespace global_planner
         return false;
     }
 
+    void GlobalPlanner::initGridLookup()
+    {
+        if (occupied_set_.empty()) return;
+
+        // Compute grid bounding box from occupied cells
+        int gmin_x = INT_MAX, gmin_y = INT_MAX, gmin_z = INT_MAX;
+        int gmax_x = INT_MIN, gmax_y = INT_MIN, gmax_z = INT_MIN;
+        for (const auto & g : occupied_set_) {
+            if (g.x < gmin_x) gmin_x = g.x;
+            if (g.x > gmax_x) gmax_x = g.x;
+            if (g.y < gmin_y) gmin_y = g.y;
+            if (g.y > gmax_y) gmax_y = g.y;
+            if (g.z < gmin_z) gmin_z = g.z;
+            if (g.z > gmax_z) gmax_z = g.z;
+        }
+
+        // Pad grid to cover all neighbor lookups without bounds-check overhead
+        const int n_robot = std::max(1, static_cast<int>(std::ceil(robot_radius_ / cached_resolution_)));
+        const int pad = std::max({
+            snap_search_radius_cells_ + 1,
+            preblocked_costmap_radius_cells_ + 1,
+            n_robot + 1,
+            ground_support_xy_radius_cells_ + 1,
+            4
+        });
+        const int sx = gmax_x - gmin_x + 1 + 2 * pad;
+        const int sy = gmax_y - gmin_y + 1 + 2 * pad;
+        const int sz = gmax_z - gmin_z + 1 + 2 * pad;
+        grid_lookup_.resize(gmin_x - pad, gmin_y - pad, gmin_z - pad, sx, sy, sz);
+
+        for (const auto & g : occupied_set_) {
+            grid_lookup_.setFlags(g, FLAG_OCCUPIED);
+        }
+    }
+
+    void GlobalPlanner::syncTraversableFlags()
+    {
+        grid_lookup_.clearFlags(FLAG_TRAVERSABLE);
+        for (const auto & c : traversable_cells_) {
+            grid_lookup_.setFlags(c, FLAG_TRAVERSABLE);
+        }
+    }
+
     void GlobalPlanner::rebuildPreblockedCells()
     {
         preblocked_cells_.clear();
@@ -474,22 +549,26 @@ namespace global_planner
         return;
         }
 
-        std::unordered_set<GridIndex, GridIndexHash> candidates;
+        // Use flat grid FLAG_CANDIDATE for dedup instead of unordered_set (vector + flag is ~100x faster)
+        grid_lookup_.clearFlags(FLAG_CANDIDATE);
+        std::vector<GridIndex> candidates;
+        candidates.reserve(occupied_set_.size() * 6);
         for (const auto & occ : occupied_set_) {
         for (int dx = -1; dx <= 1; ++dx) {
             for (int dy = -1; dy <= 1; ++dy) {
             if (dx == 0 && dy == 0) {
                 continue;
             }
-            candidates.insert(GridIndex{occ.x + dx, occ.y + dy, occ.z});
+            const GridIndex c{occ.x + dx, occ.y + dy, occ.z};
+            if (!grid_lookup_.inBounds(c)) continue;
+            if (grid_lookup_.testFlags(c, FLAG_OCCUPIED | FLAG_CANDIDATE)) continue;
+            grid_lookup_.setFlags(c, FLAG_CANDIDATE);
+            candidates.push_back(c);
             }
         }
         }
 
         for (const auto & c : candidates) {
-        if (!isInsideMetricBounds(c)) {
-            continue;
-        }
         if (isOccupiedCell(c)) {
             continue;
         }
@@ -521,6 +600,15 @@ namespace global_planner
         if (isInsideMetricBounds(c) && !isOccupiedCell(c)) {
             preblocked_cells_.insert(c);
         }
+        }
+
+        // Clean up temp candidate flags + sync preblocked flags to flat grid
+        if (!grid_lookup_.empty()) {
+            grid_lookup_.clearFlags(FLAG_CANDIDATE);
+            grid_lookup_.clearFlags(FLAG_PREBLOCKED);
+            for (const auto & c : preblocked_cells_) {
+                grid_lookup_.setFlags(c, FLAG_PREBLOCKED);
+            }
         }
         // printf("Preprocess mask rebuilt. preblocked_cells=%zu external=%zu \n",preblocked_cells_.size(), external_preblocked_cells_.size());
         // publishPreblockedCellsMarker();
@@ -592,13 +680,11 @@ namespace global_planner
             ? (strict_direct_ground_support ? 0 : support_xy_radius_cells)
             : 0;
 
-        std::unordered_set<GridIndex, GridIndexHash> checked;
+        // Use flat grid FLAG_CHECKED for dedup instead of unordered_set
+        grid_lookup_.clearFlags(FLAG_CHECKED);
 
         // Per-(x,y) set for lowest_traversable_only fast-path
         std::unordered_set<uint64_t> columns_done;
-
-        // printf("rebuildDerivedLayers: scanning %zu occupied cells (xy_radius=%d, z_depth=%d)...\n",
-        //        occupied_set_.size(), max_xy_cand, max_dz_cand);
 
         for (const auto & occ : occupied_set_) {
             for (int dx = -max_xy_cand; dx <= max_xy_cand; ++dx) {
@@ -606,16 +692,16 @@ namespace global_planner
                     for (int dz = 1; dz <= max_dz_cand; ++dz) {
                         const GridIndex candidate{occ.x + dx, occ.y + dy, occ.z + dz};
 
-                        if (checked.count(candidate)) continue;
+                        if (grid_lookup_.testFlags(candidate, FLAG_CHECKED)) continue;
                         if (lowest_traversable_only) {
                             uint64_t col = (static_cast<uint64_t>(static_cast<uint32_t>(candidate.x)) << 32)
                                          | static_cast<uint32_t>(candidate.y);
                             if (columns_done.count(col)) continue;
                         }
-                        if (!isInsideMetricBounds(candidate)) continue;
-                        if (occupied_set_.count(candidate)) continue;
+                        if (!grid_lookup_.inBounds(candidate)) continue;
+                        if (grid_lookup_.testFlags(candidate, FLAG_OCCUPIED | FLAG_CHECKED)) continue;
 
-                        checked.insert(candidate);
+                        grid_lookup_.setFlags(candidate, FLAG_CHECKED);
 
                         if (isCellTraversable(
                             candidate, robot_radius, require_ground_support,
@@ -634,32 +720,39 @@ namespace global_planner
             }
         }
 
+        // Clean up temp checked flags + sync traversable flags to flat grid
+        if (!grid_lookup_.empty()) {
+            grid_lookup_.clearFlags(FLAG_CHECKED);
+            syncTraversableFlags();
+        }
         // printf("Traversable cells rebuilt: %zu cells (lowest_only=%d)\n",
         //        traversable_cells_.size(), lowest_traversable_only ? 1 : 0);
     }
 
     bool GlobalPlanner::isInsideMetricBounds(const GridIndex & idx) const
     {
-        double min_x, min_y, min_z, max_x, max_y, max_z;
-        octree_->getMetricMin(min_x, min_y, min_z);
-        octree_->getMetricMax(max_x, max_y, max_z);
+        // Fast path: integer grid bounds comparison (6 int compares, no float math)
+        if (!grid_lookup_.empty()) {
+            return grid_lookup_.inBounds(idx);
+        }
+        // Fallback before grid is initialized
         const auto p = gridToWorld(idx);
-        return p.x() >= static_cast<float>(min_x) && p.x() <= static_cast<float>(max_x) &&
-            p.y() >= static_cast<float>(min_y) && p.y() <= static_cast<float>(max_y) &&
-            p.z() >= static_cast<float>(min_z) && p.z() <= static_cast<float>(max_z);
+        return p.x() >= static_cast<float>(metric_min_x_) && p.x() <= static_cast<float>(metric_max_x_) &&
+            p.y() >= static_cast<float>(metric_min_y_) && p.y() <= static_cast<float>(metric_max_y_) &&
+            p.z() >= static_cast<float>(metric_min_z_) && p.z() <= static_cast<float>(metric_max_z_);
     }
 
     bool GlobalPlanner::isOccupiedCell(const GridIndex & idx) const
     {
-        if (!isInsideMetricBounds(idx)) {
+        if (!grid_lookup_.inBounds(idx)) {
         return false;
         }
-        return occupied_set_.find(idx) != occupied_set_.end();
+        return grid_lookup_.testFlags(idx, FLAG_OCCUPIED);
     }
 
     GridIndex GlobalPlanner::worldToGrid(double x, double y, double z) const
     {
-        const double r = octree_->getResolution();
+        const double r = cached_resolution_;
         return GridIndex{
         static_cast<int>(std::floor(x / r)),
         static_cast<int>(std::floor(y / r)),
@@ -668,7 +761,7 @@ namespace global_planner
 
     octomap::point3d GlobalPlanner::gridToWorld(const GridIndex & idx) const
     {
-        const double r = octree_->getResolution();
+        const double r = cached_resolution_;
         return octomap::point3d(
         static_cast<float>((static_cast<double>(idx.x) + 0.5) * r),
         static_cast<float>((static_cast<double>(idx.y) + 0.5) * r),
@@ -690,36 +783,41 @@ namespace global_planner
         1, static_cast<int>(preblocked_costmap_radius_cells_));
         const double denom = static_cast<double>(radius_cells) + 1.0;
 
-        for (const auto & c : preblocked_cells_) {
+        // Precompute sphere offsets (within radius, excluding center).
+        // ~113 offsets vs 343 for full cube -- avoids 67% of find() calls.
+        struct Offset { int dx, dy, dz; double cost; };
+        std::vector<Offset> offsets;
+        offsets.reserve(150);
         for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
-            for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+          for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
             for (int dz = -radius_cells; dz <= radius_cells; ++dz) {
-                if (dx == 0 && dy == 0 && dz == 0) {
-                continue;
-                }
-                const GridIndex n{c.x + dx, c.y + dy, c.z + dz};
-                if (!isInsideMetricBounds(n)) {
-                continue;
-                }
-                if (traversable_cells_.find(n) == traversable_cells_.end()) {
-                continue;
-                }
-                if (preblocked_cells_.find(n) != preblocked_cells_.end()) {
-                continue;
-                }
-                const double d = std::sqrt(
+              if (dx == 0 && dy == 0 && dz == 0) continue;
+              const double d = std::sqrt(
                 static_cast<double>(dx * dx + dy * dy + dz * dz));
-                if (d > static_cast<double>(radius_cells)) {
-                continue;
-                }
-                const double cst = std::max(0.0, (denom - d) / denom);
-                auto it = preblocked_costmap_.find(n);
-                if (it == preblocked_costmap_.end() || cst > it->second) {
-                preblocked_costmap_[n] = cst;
-                }
+              if (d > static_cast<double>(radius_cells)) continue;
+              offsets.push_back({dx, dy, dz, std::max(0.0, (denom - d) / denom)});
             }
-            }
+          }
         }
+
+        // Iterate traversable cells, check sphere of neighbors for preblocked.
+        for (const auto & t : traversable_cells_) {
+          if (grid_lookup_.testFlags(t, FLAG_PREBLOCKED)) {
+            continue;
+          }
+          double best_cst = 0.0;
+          for (const auto & off : offsets) {
+            const GridIndex n{t.x + off.dx, t.y + off.dy, t.z + off.dz};
+            if (!grid_lookup_.testFlags(n, FLAG_PREBLOCKED)) {
+              continue;
+            }
+            if (off.cost > best_cst) {
+              best_cst = off.cost;
+            }
+          }
+          if (best_cst > 0.0) {
+            preblocked_costmap_[t] = best_cst;
+          }
         }
 
         // RCLCPP_INFO(
@@ -736,7 +834,7 @@ namespace global_planner
             return;
         }
 
-        const double res = octree_->getResolution();
+        const double res = cached_resolution_;
         const int radius_cells = std::max(1,
             static_cast<int>(std::ceil(radical_infill_radius_m_ / res)));
         const int half_z_cells = std::max(1,
@@ -745,26 +843,32 @@ namespace global_planner
             static_cast<int>(std::ceil(radical_infill_clearance_m_ / res)));
 
         // Step 1: 26-connected components of traversable_cells_
+        // Use flat int array for component_id instead of unordered_map (~100x faster)
+        const auto & gl = grid_lookup_;
+        std::vector<int> comp_grid(gl.data.size(), -1);
         const std::vector<GridIndex> dirs_26 = make26Directions();
-        std::unordered_map<GridIndex, int, GridIndexHash> component_id;
         std::vector<std::vector<GridIndex>> components;
 
         for (const auto & cell : traversable_cells_) {
-            if (component_id.find(cell) != component_id.end()) continue;
+            if (!gl.inBounds(cell)) continue;
+            const size_t fi = gl.flatIndex(cell);
+            if (comp_grid[fi] >= 0) continue;
             const int comp_idx = static_cast<int>(components.size());
             std::vector<GridIndex> comp;
             std::queue<GridIndex> q;
             q.push(cell);
-            component_id[cell] = comp_idx;
+            comp_grid[fi] = comp_idx;
             while (!q.empty()) {
                 const GridIndex cur = q.front();
                 q.pop();
                 comp.push_back(cur);
                 for (const auto & d : dirs_26) {
                     const GridIndex nbr{cur.x + d.x, cur.y + d.y, cur.z + d.z};
-                    if (traversable_cells_.find(nbr) == traversable_cells_.end()) continue;
-                    if (component_id.find(nbr) != component_id.end()) continue;
-                    component_id[nbr] = comp_idx;
+                    if (!gl.inBounds(nbr)) continue;
+                    const size_t nfi = gl.flatIndex(nbr);
+                    if (!gl.testFlags(nbr, FLAG_TRAVERSABLE)) continue;
+                    if (comp_grid[nfi] >= 0) continue;
+                    comp_grid[nfi] = comp_idx;
                     q.push(nbr);
                 }
             }
@@ -789,7 +893,7 @@ namespace global_planner
                     for (int dy = -1; dy <= 1; ++dy) {
                         if (dx == 0 && dy == 0) continue;
                         const GridIndex nbr{cell.x + dx, cell.y + dy, cell.z};
-                        if (traversable_cells_.find(nbr) == traversable_cells_.end()) {
+                        if (!grid_lookup_.testFlags(nbr, FLAG_TRAVERSABLE)) {
                             edge_cells[ci].push_back(cell);
                             goto next_cell;
                         }
@@ -799,7 +903,8 @@ namespace global_planner
             }
         }
 
-        std::unordered_set<GridIndex, GridIndexHash> filled;
+        // Use flat bit array for filled cells instead of unordered_set
+        std::vector<bool> filled_grid(gl.data.size(), false);
 
         for (size_t ci = 0; ci < components.size(); ++ci) {
             for (const auto & seed : edge_cells[ci]) {
@@ -808,11 +913,11 @@ namespace global_planner
                         if (dx * dx + dy * dy > radius_cells * radius_cells) continue;
                         for (int dz = -half_z_cells; dz <= half_z_cells; ++dz) {
                             const GridIndex target{seed.x + dx, seed.y + dy, seed.z + dz};
-                            if (traversable_cells_.find(target) == traversable_cells_.end()) continue;
-                            auto cid_it = component_id.find(target);
-                            if (cid_it == component_id.end()) continue;
-                            int cj = cid_it->second;
-                            if (static_cast<size_t>(cj) == ci) continue;
+                            if (!gl.inBounds(target)) continue;
+                            if (!gl.testFlags(target, FLAG_TRAVERSABLE)) continue;
+                            const size_t tfi = gl.flatIndex(target);
+                            const int cj = comp_grid[tfi];
+                            if (cj < 0 || static_cast<size_t>(cj) == ci) continue;
 
                             // Bresenham 2D line from seed to target, Z-interpolated
                             const int x0 = seed.x, y0 = seed.y;
@@ -834,13 +939,15 @@ namespace global_planner
 
                                 const GridIndex lc{cx, cy, cz};
 
-                                if (traversable_cells_.count(lc) || filled.count(lc)) {
-                                    goto step_advance;
-                                }
-                                if (isOccupiedCell(lc)) {
-                                    goto step_advance;
-                                }
+                                if (!gl.inBounds(lc)) goto step_advance;
                                 {
+                                    const size_t lfi = gl.flatIndex(lc);
+                                    if (gl.testFlags(lc, FLAG_TRAVERSABLE) || filled_grid[lfi]) {
+                                        goto step_advance;
+                                    }
+                                    if (isOccupiedCell(lc)) {
+                                        goto step_advance;
+                                    }
                                     bool cell_blocked = false;
                                     for (int dz_chk = 1; dz_chk <= clearance_cells; ++dz_chk) {
                                         const GridIndex above{lc.x, lc.y, lc.z + dz_chk};
@@ -850,7 +957,7 @@ namespace global_planner
                                         }
                                     }
                                     if (!cell_blocked) {
-                                        filled.insert(lc);
+                                        filled_grid[lfi] = true;
                                     }
                                 }
 
@@ -868,7 +975,20 @@ namespace global_planner
 
         // printf("RadicalInfill: %zu components, filled %zu cells.\n",
         //        components.size(), filled.size());
-        traversable_cells_.insert(filled.begin(), filled.end());
+        // Collect filled cells and add to traversable set + grid flags
+        for (size_t i = 0; i < filled_grid.size(); ++i) {
+            if (filled_grid[i]) {
+                // Decode flat index back to GridIndex
+                const int total_xy = gl.size_x * gl.size_y;
+                const int lz = static_cast<int>(i / total_xy);
+                const int rem = static_cast<int>(i % total_xy);
+                const int ly = rem / gl.size_x;
+                const int lx = rem % gl.size_x;
+                GridIndex fc{gl.origin_x + lx, gl.origin_y + ly, gl.origin_z + lz};
+                traversable_cells_.insert(fc);
+                grid_lookup_.setFlags(fc, FLAG_TRAVERSABLE);
+            }
+        }
     }
 
     void GlobalPlanner::flattenTraversable()
@@ -877,28 +997,48 @@ namespace global_planner
 
         const int window = flatten_window_cells_;
         const int max_delta = flatten_max_delta_cells_;
+        const auto & gl = grid_lookup_;
 
-        // Build 2D height map: (x,y) -> lowest traversable Z
-        std::map<std::pair<int,int>, int> height_map;
+        // Build 2D height map using flat arrays instead of std::map
+        // Sentinel value INT_MIN means "no traversable cell at this (x,y)"
+        std::vector<int> height_grid(
+            static_cast<size_t>(gl.size_x) * static_cast<size_t>(gl.size_y), INT_MIN);
+        auto hidx = [&](int x, int y) -> size_t {
+            return static_cast<size_t>(y - gl.origin_y) * static_cast<size_t>(gl.size_x) +
+                   static_cast<size_t>(x - gl.origin_x);
+        };
+
         for (const auto& cell : traversable_cells_) {
-            auto key = std::make_pair(cell.x, cell.y);
-            auto it = height_map.find(key);
-            if (it == height_map.end() || cell.z < it->second) {
-                height_map[key] = cell.z;
+            if (!gl.inBounds({cell.x, cell.y, gl.origin_z})) continue;
+            const size_t hi = hidx(cell.x, cell.y);
+            if (height_grid[hi] == INT_MIN || cell.z < height_grid[hi]) {
+                height_grid[hi] = cell.z;
+            }
+        }
+
+        // Collect populated columns for iteration
+        std::vector<std::pair<size_t, int>> columns;
+        for (size_t hi = 0; hi < height_grid.size(); ++hi) {
+            if (height_grid[hi] != INT_MIN) {
+                columns.emplace_back(hi, height_grid[hi]);
             }
         }
 
         // Median-filter each column
         std::vector<std::pair<GridIndex, int>> adjustments;
-        for (const auto& [key, z] : height_map) {
-            const int x = key.first, y = key.second;
+        for (const auto& [hi, z] : columns) {
+            const int x = gl.origin_x + static_cast<int>(hi % gl.size_x);
+            const int y = gl.origin_y + static_cast<int>(hi / gl.size_x);
 
             std::vector<int> neighbor_zs;
             for (int dx = -window; dx <= window; ++dx) {
                 for (int dy = -window; dy <= window; ++dy) {
-                    auto it = height_map.find({x + dx, y + dy});
-                    if (it != height_map.end()) {
-                        neighbor_zs.push_back(it->second);
+                    const int nx = x + dx, ny = y + dy;
+                    if (nx < gl.origin_x || nx >= gl.origin_x + gl.size_x ||
+                        ny < gl.origin_y || ny >= gl.origin_y + gl.size_y) continue;
+                    const int nz = height_grid[hidx(nx, ny)];
+                    if (nz != INT_MIN) {
+                        neighbor_zs.push_back(nz);
                     }
                 }
             }

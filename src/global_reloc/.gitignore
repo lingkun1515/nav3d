@@ -1,0 +1,19 @@
+# IDE
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Test output and evolving docs
+runs/
+PROGRESS.md
+
+# Build artifacts
+build/
+install/
+log/
+
+# Experimental scripts
+scripts/batch_extract.py
+scripts/gen_viz.py

@@ -71,6 +71,10 @@
     # ---- 重定位 (仅 mode=relocation 生效, init_pose 由 launch 覆盖) ----
     lio.relocation.update_map: false
     lio.relocation.init_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # 外部初始位姿源 (global_reloc): true=订阅 init_pose_topic 等待外部估计再初始化,
+    # false=用上面的 init_pose (默认, 行为不变)。launch 的 global_reloc:=true 会覆盖此项。
+    lio.relocation.use_external_init_pose: false
+    lio.relocation.init_pose_topic: "/initialpose"
 
     # ---- 性能评估 ----
     lio.eva.timer: true

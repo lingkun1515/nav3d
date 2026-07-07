@@ -45,6 +45,72 @@ struct GridIndexHash
     return h1 ^ (h2 << 1) ^ (h3 << 2);
   }
 };
+ 
+/// Flat 3D bit-flag grid for O(1) cell membership lookups.
+/// Replaces unordered_set::find() (~800ns) with array index (~2ns).
+struct FlatGrid
+{
+  std::vector<uint8_t> data;
+  int origin_x = 0, origin_y = 0, origin_z = 0;
+  int size_x = 0, size_y = 0, size_z = 0;
+ 
+  void resize(int ox, int oy, int oz, int sx, int sy, int sz)
+  {
+    origin_x = ox; origin_y = oy; origin_z = oz;
+    size_x = sx; size_y = sy; size_z = sz;
+    data.assign(static_cast<size_t>(sx) * static_cast<size_t>(sy) * static_cast<size_t>(sz), 0);
+  }
+ 
+  inline bool empty() const { return data.empty(); }
+ 
+  inline bool inBounds(const GridIndex & idx) const
+  {
+    const int lx = idx.x - origin_x;
+    const int ly = idx.y - origin_y;
+    const int lz = idx.z - origin_z;
+    return lx >= 0 && lx < size_x &&
+           ly >= 0 && ly < size_y &&
+           lz >= 0 && lz < size_z;
+  }
+ 
+  inline size_t flatIndex(const GridIndex & idx) const
+  {
+    const int lx = idx.x - origin_x;
+    const int ly = idx.y - origin_y;
+    const int lz = idx.z - origin_z;
+    return (static_cast<size_t>(lz) * static_cast<size_t>(size_y) +
+            static_cast<size_t>(ly)) * static_cast<size_t>(size_x) +
+           static_cast<size_t>(lx);
+  }
+ 
+  inline void setFlags(const GridIndex & idx, uint8_t flags)
+  {
+    data[flatIndex(idx)] |= flags;
+  }
+ 
+  inline void clearFlags(uint8_t flags)
+  {
+    const uint8_t mask = static_cast<uint8_t>(~flags);
+    for (auto & v : data) { v &= mask; }
+  }
+ 
+  inline void clearAll()
+  {
+    std::fill(data.begin(), data.end(), static_cast<uint8_t>(0));
+  }
+ 
+  inline bool testFlags(const GridIndex & idx, uint8_t flags) const
+  {
+    return (data[flatIndex(idx)] & flags) != 0;
+  }
+};
+ 
+// Bit flags for cell categories in the flat grid.
+constexpr uint8_t FLAG_OCCUPIED = 1;
+constexpr uint8_t FLAG_PREBLOCKED = 2;
+constexpr uint8_t FLAG_TRAVERSABLE = 4;
+constexpr uint8_t FLAG_CANDIDATE = 8;   // temp flag for rebuildPreblockedCells dedup
+constexpr uint8_t FLAG_CHECKED = 16;    // temp flag for rebuildDerivedLayers dedup
 
 struct QueueNode
 {
@@ -160,6 +226,9 @@ private:
 
   bool hasSameLevelNeighborWithOccupiedAbove(const GridIndex & idx) const;
 
+  void initGridLookup();
+
+  void syncTraversableFlags();
   void rebuildPreblockedCells();
 
 //   void onExternalPreblockedMarker(const visualization_msgs::msg::Marker::SharedPtr msg);
@@ -271,6 +340,14 @@ private:
   std::vector<PointPose> planner_results_;
 
   std::shared_ptr<octomap::OcTree> octree_;
+
+  // Cached metric bounds (updated in setOctomap, avoids per-call tree traversal)
+  double metric_min_x_ = 0, metric_min_y_ = 0, metric_min_z_ = 0;
+  double metric_max_x_ = 0, metric_max_y_ = 0, metric_max_z_ = 0;
+  double cached_resolution_ = 0.2;  // cached octree resolution
+
+  // Flat 3D grid for O(1) cell lookups (occupied/preblocked/traversable flags).
+  FlatGrid grid_lookup_;
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
   std::unordered_set<GridIndex, GridIndexHash> occupied_set_;

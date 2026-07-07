@@ -1,0 +1,3 @@
+# Built inline by the parent global_reloc CMakeLists via add_subdirectory().
+# This marker prevents colcon from discovering small_gicp as a standalone
+# cmake package (it has its own package.xml) when global_reloc is built.
