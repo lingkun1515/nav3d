@@ -56,6 +56,7 @@ def generate_launch_description():
     reloc_params = os.path.join(pkg_reloc, 'config', 'params.yaml')
     rviz_config = os.path.join(pkg_slam, 'rviz', 'lio.rviz')
     default_map_key = os.path.join(pkg_bringup, 'maps', 'reloc_map.gkey')
+    map_pcd_dir = os.path.join(pkg_bringup, 'maps')
 
     # ---- 公共参数 ----
     mode = LaunchConfiguration('mode')
@@ -64,8 +65,6 @@ def generate_launch_description():
     init_pose = LaunchConfiguration('init_pose')
     global_reloc = LaunchConfiguration('global_reloc')
     map_key_path = LaunchConfiguration('map_key_path')
-    reloc_gate_publish = LaunchConfiguration('reloc_gate_publish')
-    reloc_strategy = LaunchConfiguration('reloc_strategy')
 
     ld = LaunchDescription([
         DeclareLaunchArgument('mode', default_value='relocation',
@@ -75,7 +74,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='false',
                               description='使用仿真时间'),
         DeclareLaunchArgument('init_pose',
-                              default_value='[0.0,0.0,0.0,0.0,0.0,0.0]',
+                              default_value='[2.5,16.5,0.0,5.0,0.0,0.0]',
                               description='重定位初值 [x,y,z,roll,pitch,yaw] (global_reloc:=true 时被忽略)'),
         DeclareLaunchArgument('global_reloc', default_value='false',
                               description="true=重定位时启用 global_reloc, super_lio 订阅 /initial_pose 作为初始预估 "
@@ -83,13 +82,6 @@ def generate_launch_description():
         DeclareLaunchArgument('map_key_path', default_value=default_map_key,
                               description='global_reloc 的 .gkey 地图索引 (须与 super_lio 先验 .pcd 同源; '
                                           '默认用 bringup/maps/reloc_map.gkey, ./scripts/test_reloc.sh build-map 生成)'),
-        DeclareLaunchArgument('reloc_gate_publish', default_value='true',
-                              description='global_reloc 是否仅在时序一致性可靠时才发布 /initial_pose '
-                                          '(true=等可靠位姿再让 super_lio 初始化, 推荐)'),
-        DeclareLaunchArgument('reloc_strategy', default_value='fast',
-                              description="global_reloc 粗匹配策略: 'fast' (~0.7s, BEV+法向yaw+GICP, "
-                                          "在线推荐—super_lio 自带 ICP 会精配), 'ndt_gicp' (~90s, 暴力 NDT "
-                                          "网格, 最高独立精度), 'bev' (~15s)"),
     ])
 
     # ---- TF 桥接 ----
@@ -129,7 +121,8 @@ def generate_launch_description():
         name='super_lio_node',
         output='screen',
         parameters=[slam_config,
-                    {'use_sim_time': use_sim_time}],
+                    {'use_sim_time': use_sim_time},
+                    {'lio.map.save_map_dir': map_pcd_dir}],
         remappings=slam_remaps,
         condition=IfCondition(PythonExpression(["'", mode, "' == 'mapping'"])),
     ))
@@ -145,7 +138,8 @@ def generate_launch_description():
                     {'use_sim_time': use_sim_time},
                     {'lio.relocation.init_pose': init_pose},
                     {'lio.relocation.use_external_init_pose': use_external_init_pose},
-                    {'lio.relocation.init_pose_topic': init_pose_topic}],
+                    {'lio.relocation.init_pose_topic': init_pose_topic},
+                    {'lio.map.save_map_dir': map_pcd_dir}],
         remappings=slam_remaps,
         condition=IfCondition(PythonExpression(["'", mode, "' == 'relocation'"])),
     ))
@@ -165,8 +159,6 @@ def generate_launch_description():
             {'init_pose_topic': '/initial_pose'},
             {'map_key_path': map_key_path},
             {'params_path': reloc_params},
-            {'gate_publish': reloc_gate_publish},
-            {'coarse_strategy': reloc_strategy},
         ],
         condition=IfCondition(reloc_cond),
     ))

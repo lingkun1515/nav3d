@@ -8,14 +8,15 @@ Usage:
 Options:
   --visualize    Show Open3D 3D preview
   --no-align     Skip coordinate alignment (default: alignment ON)
-  --infill       Enable multi-floor ground infill (default: OFF)
-  --voxel_size N Voxel downsampling grid size (m), default: disabled
+  --infill, --no-infill  Enable multi-floor ground infill (default: ON)
+  --voxel_size N     Voxel downsampling grid size (m), default: 0.1
+  --voxel_min_points N  Min points per voxel to keep (default: 5)
 
 Steps (when alignment enabled):
   1. RANSAC extracts ground plane → compute rotation to align ground with XOY
   2. Detect dominant vertical planes (walls) → rotate around Z to align XY with walls
-  3. Translate so ground center = origin
-  4. (optional) Ground infill → fill sparse floor gaps
+  3. Detect lowest horizontal plane → translate origin to ground floor center
+  4. Ground infill → fill sparse floor gaps (enabled by default)
   5. Save result
 """
 
@@ -141,6 +142,49 @@ def compute_yaw_rotation(yaw_angle):
         [0, 0, 1]
     ])
     return R
+
+
+def find_lowest_horizontal_plane(pcd, distance_threshold=0.1, num_iterations=2000,
+                                  max_planes=5, z_normal_threshold=0.8):
+    """
+    Iteratively extract horizontal planes via RANSAC and return inliers of
+    the lowest one. For multi-story buildings, ensures origin goes to the
+    bottom floor's ground plane, not a ceiling or upper floor.
+
+    Returns (plane_model, inlier_points_Nx3_array) or (None, None).
+    """
+    remaining = o3d.geometry.PointCloud(pcd)  # copy
+    candidates = []
+
+    for _ in range(max_planes):
+        if len(remaining.points) < 100:
+            break
+        plane_model, inliers = remaining.segment_plane(
+            distance_threshold=distance_threshold,
+            ransac_n=3,
+            num_iterations=num_iterations
+        )
+        a, b, c, d = plane_model
+        n = np.array([a, b, c])
+        n = n / np.linalg.norm(n)
+
+        # Check if approximately horizontal (normal aligns with Z)
+        if abs(n[2]) > z_normal_threshold:
+            inlier_pts = np.asarray(remaining.points)[inliers]
+            z_median = np.median(inlier_pts[:, 2])
+            candidates.append((z_median, plane_model, inlier_pts))
+
+        # Remove inliers for next iteration
+        remaining = remaining.select_by_index(inliers, invert=True)
+
+    if not candidates:
+        return None, None
+
+    # Return the lowest plane by median Z
+    candidates.sort(key=lambda x: x[0])
+    z, model, pts = candidates[0]
+    print(f"    Found {len(candidates)} horizontal plane(s), using lowest (Z={z:.3f})")
+    return model, pts
 
 
 def floor_infill(points, resolution=0.2, min_floor_density=0.15, neighbor_threshold=3):
@@ -287,8 +331,8 @@ def voxel_down_sample_with_min_points(pcd, voxel_size, min_points=1):
 
 
 def preprocess_map(input_path, output_path, visualize=False,
-                   do_align=True, do_infill=False, voxel_size=None,
-                   voxel_min_points=1):
+                   do_align=True, do_infill=True, voxel_size=0.1,
+                   voxel_min_points=5):
     """Full preprocessing pipeline."""
     print(f"Loading: {input_path}")
     pcd = o3d.io.read_point_cloud(input_path)
@@ -298,7 +342,7 @@ def preprocess_map(input_path, output_path, visualize=False,
           f"Y[{points[:,1].min():.2f}, {points[:,1].max():.2f}] "
           f"Z[{points[:,2].min():.2f}, {points[:,2].max():.2f}]")
 
-    # --- Voxel downsampling (optional, runs first) ---
+    # --- Voxel downsampling (enabled by default) ---
     if voxel_size is not None and voxel_size > 0:
         n_before = len(pcd.points)
         pcd = voxel_down_sample_with_min_points(pcd, voxel_size, voxel_min_points)
@@ -346,24 +390,29 @@ def preprocess_map(input_path, output_path, visualize=False,
         else:
             print("  Could not determine wall direction, skipping XY alignment")
 
-        # Step 4: Translate origin to ground center
-        print("\n[Step 4] Origin → ground center...")
-        plane_model2, ground_inliers2 = ransac_ground_plane(pcd, distance_threshold=0.1)
-        ground_points = points[ground_inliers2]
-        ground_center_x = np.median(ground_points[:, 0])
-        ground_center_y = np.median(ground_points[:, 1])
-        ground_z = np.median(ground_points[:, 2])
-        print(f"  Ground center: ({ground_center_x:.3f}, {ground_center_y:.3f}, {ground_z:.3f})")
+        # Step 4: Translate origin to lowest ground plane center
+        print("\n[Step 4] Origin → lowest ground plane center...")
+        _, ground_points = find_lowest_horizontal_plane(pcd)
+        if ground_points is not None:
+            ground_center_x = np.median(ground_points[:, 0])
+            ground_center_y = np.median(ground_points[:, 1])
+            ground_z = np.median(ground_points[:, 2])
+            print(f"  Ground center: ({ground_center_x:.3f}, {ground_center_y:.3f}, {ground_z:.3f})")
 
-        points[:, 0] -= ground_center_x
-        points[:, 1] -= ground_center_y
-        points[:, 2] -= ground_z
-        pcd.points = o3d.utility.Vector3dVector(points)
+            points[:, 0] -= ground_center_x
+            points[:, 1] -= ground_center_y
+            points[:, 2] -= ground_z
+            pcd.points = o3d.utility.Vector3dVector(points)
+        else:
+            print("  Warning: no horizontal plane found, keeping origin as-is")
+            ground_center_x = 0.0
+            ground_center_y = 0.0
+            ground_z = 0.0
     else:
         print("\n[Coordinate alignment] SKIPPED")
         points = np.asarray(pcd.points)
 
-    # --- Ground infill (optional, default OFF) ---
+    # --- Ground infill (enabled by default) ---
     if do_infill:
         print("\n[Step 5] Ground infill (multi-floor compatible)...")
         points = np.asarray(pcd.points)
@@ -424,12 +473,12 @@ if __name__ == '__main__':
     parser.add_argument('--visualize', action='store_true', help='Show Open3D visualization')
     parser.add_argument('--no-align', action='store_true',
                         help='Skip coordinate alignment (default: alignment ON)')
-    parser.add_argument('--infill', action='store_true',
-                        help='Enable ground infill (default: OFF)')
-    parser.add_argument('--voxel_size', type=float, default=None,
-                        help='Voxel downsampling grid size in meters (default: disabled)')
-    parser.add_argument('--voxel_min_points', type=int, default=10,
-                        help='Min points per voxel; voxels below this are discarded (default: 1)')
+    parser.add_argument('--infill', action=argparse.BooleanOptionalAction, default=True,
+                        help='Enable ground infill (default: ON)')
+    parser.add_argument('--voxel_size', type=float, default=0.05,
+                        help='Voxel downsampling grid size in meters (default: 0.05, set 0 to disable)')
+    parser.add_argument('--voxel_min_points', type=int, default=1,
+                        help='Min points per voxel; voxels below this are discarded (default: 5)')
     args = parser.parse_args()
 
     preprocess_map(args.input, args.output, args.visualize,

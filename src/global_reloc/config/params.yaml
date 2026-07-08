@@ -8,14 +8,13 @@ global_reloc:
   # map's repetitive structure and reloc jumps between look-alikes. Accumulating
   # ~2 s of scan yields a far more unique local cloud — this is the single most
   # important robustness lever. Tune down only on hardware with little motion.
-  accumulate_frames: 30             # N frames to accumulate before running reloc (~2 s @ 15 Hz)
-  accumulate_max_dt: 2.5            # max accumulation window [s]
+  accumulate_frames: 10             # N frames to accumulate before running reloc (~2 s @ 15 Hz)
+  accumulate_max_dt: 1.0            # max accumulation window [s]
   voxel_query_size: 0.3             # downsample resolution for the online query cloud [m]
 
   # Coarse stage strategy. "bev" = deterministic BEV distance-transform yaw
-  # sweep (robust, default). "sacia" = legacy FPFH + SAC-IA (fragile on sparse
-  # Livox data; kept for comparison only).
-  coarse_strategy: ndt_gicp
+  # “fast” "ndt_gicp"
+  coarse_strategy: fast
 
   feature:
     normal_radius: 0.6              # [m]
@@ -45,6 +44,8 @@ global_reloc:
     z_dedup: 0.8                    # min separation [m] between kept z hypotheses
     z_band: 1.0                     # [m] height-consistency band for BEV scoring
     dir_band: 0.35                  # [rad] wall-direction consistency band (~20deg) for yaw disambiguation
+    ndt_grid_step: 10.0             # NDT coarse grid spacing [m] (5m=full coverage; 10m=4x fewer cells, still within 10m NDT basin)
+    ndt_yaw_count: 4                # NDT coarse yaw count (8=full 45deg step; 4=90deg step, 2x faster)
 
   fine:
     voxel_size: 0.2                 # [m] both clouds downsampled to this before GICP
@@ -60,6 +61,10 @@ global_reloc:
     min_tight_inlier_ratio: 0.05    # relaxed
     gravity_align_tol: 0.15         # [rad] roll/pitch deviation from gravity tolerated
     map_aabb_margin: 2.0            # [m] result must be within map AABB + margin
+
+  # ---- node params (used by reloc_node ROS wrapper) ----
+  gate_publish: false               # only publish temporally-consistent poses
+  gravity_pitch_deg: 15.0           # LiDAR fixed pitch prior [deg], 0=off
 
   runtime:
     auto_retrigger: true            # re-run reloc when tracking lost reported

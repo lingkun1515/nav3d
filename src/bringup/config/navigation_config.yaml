@@ -62,9 +62,9 @@ octo_planner_node:
     # occupied voxels outside the box are dropped after load. Disabled by
     # default; when enabled, min must be < max on each axis. For .world/.sdf
     # the box's XY footprint also bounds voxel generation.
-    crop_box_enabled: false
-    crop_box_min: [0.0, 0.0, 0.0]
-    crop_box_max: [0.0, 0.0, 0.0]
+    crop_box_enabled: true
+    crop_box_min: [-22.0, -8.0, -1.0]
+    crop_box_max: [10.0, 25.0, 6.0]
 
     # Online incremental OctoMap update from real-time point cloud
     online_update_enabled: false

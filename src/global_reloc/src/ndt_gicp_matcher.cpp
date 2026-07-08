@@ -182,18 +182,17 @@ std::vector<Candidate> NdtGicpMatcher::match(const pcl::PointCloud<pcl::PointXYZ
   std::sort(qz.begin(), qz.end());
   double sensor_z = qz.empty() ? 0.0 : qz[qz.size() / 2];
 
-  // Stage 1: NDT global search — 5m grid × 4 yaw.
-  // NDT convergence basin ~5-10m, so 5m grid ensures coverage.
+  // Stage 1: NDT global search — params_.ndt_grid_step m × params_.ndt_yaw_count yaw.
+  // NDT convergence basin ~5-10m; the coarse grid need only be within that.
   double x_min = map_->aabb.min.x(), x_max = map_->aabb.max.x();
   double y_min = map_->aabb.min.y(), y_max = map_->aabb.max.y();
 
-  const double grid_step = 5.0;  // 5m grid
-  // Two-stage NDT: coarse (4 yaw) for position, fine (24 yaw) at top positions.
-  // Stage 1a: NDT coarse — 5m grid × 8 yaw. v14 parameters.
+  const double grid_step = params_.ndt_grid_step;
+  const int yaw_count = params_.ndt_yaw_count;
   struct PosCandidate { Eigen::Isometry3d pose; double fitness; };
   std::vector<PosCandidate> coarse_ndt;
-  for (int yi = 0; yi < 8; ++yi) {
-    double yaw = yi * (M_PI / 4.0);
+  for (int yi = 0; yi < yaw_count; ++yi) {
+    double yaw = yi * (2.0 * M_PI / yaw_count);
     for (double x = x_min; x <= x_max; x += grid_step) {
       for (double y = y_min; y <= y_max; y += grid_step) {
         Eigen::Isometry3d init = Eigen::Isometry3d::Identity();

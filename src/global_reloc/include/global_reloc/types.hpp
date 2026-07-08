@@ -100,6 +100,10 @@ struct BevParams {
   double z_dedup = 0.8;           ///< min separation [m] between kept z hypotheses
   double z_band = 1.0;            ///< [m] height-consistency band for BEV scoring
   double dir_band = 0.35;         ///< [rad] wall-direction consistency band (~20deg)
+
+  // NdtGicp / bev_ndt matcher: coarse NDT grid sweep params.
+  double ndt_grid_step = 10.0;   ///< NDT grid spacing [m] (was 5; 10=4× fewer cells)
+  int ndt_yaw_count = 4;         ///< coarse yaw enumerations (was 8; 4=every 90°)
 };
 
 struct FineParams {
@@ -136,6 +140,10 @@ struct RelocParams {
 
   bool auto_retrigger = true;
   double reloc_cooldown = 3.0;
+
+  // Node-level params (shared file for simplicity; used by reloc_node).
+  bool gate_publish = false;       // only publish temporally-consistent poses
+  double gravity_pitch_deg = 15.0; // LiDAR fixed pitch prior [deg], 0=off
 };
 
 }  // namespace global_reloc

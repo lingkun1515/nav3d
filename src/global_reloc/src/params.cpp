@@ -160,6 +160,8 @@ void apply(const FlatMap& m, RelocParams& p) {
   m.getAs(P("bev.z_dedup"), p.bev.z_dedup);
   m.getAs(P("bev.z_band"), p.bev.z_band);
   m.getAs(P("bev.dir_band"), p.bev.dir_band);
+  m.getAs(P("bev.ndt_grid_step"), p.bev.ndt_grid_step);
+  m.getAs(P("bev.ndt_yaw_count"), p.bev.ndt_yaw_count);
 
   m.getAs(P("fine.voxel_size"), p.fine.voxel_size);
   m.getAs(P("fine.max_correspondence_distance"), p.fine.max_correspondence_distance);
@@ -176,6 +178,10 @@ void apply(const FlatMap& m, RelocParams& p) {
 
   m.getAs(P("runtime.auto_retrigger"), p.auto_retrigger);
   m.getAs(P("runtime.reloc_cooldown"), p.reloc_cooldown);
+
+  // Node-level params (shared file, used by reloc_node ROS wrapper).
+  m.getAs(P("gate_publish"), p.gate_publish);
+  m.getAs(P("gravity_pitch_deg"), p.gravity_pitch_deg);
 }
 
 }  // namespace

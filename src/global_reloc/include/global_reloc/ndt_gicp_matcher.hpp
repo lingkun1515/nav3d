@@ -36,6 +36,15 @@ class NdtGicpMatcher {
   void setMap(const GlobalMap* map);
   std::vector<Candidate> match(const pcl::PointCloud<pcl::PointXYZ>& query_raw) const;
 
+  struct NdtResult { Eigen::Isometry3d pose; double fitness; };
+  /// Ensure the NDT + small_gicp structures are built (lazy-init). Safe to call
+  /// repeatedly; no-op when already built.
+  void ensureBuilt() const;
+
+  /// Run a single NDT alignment from @p init (for external per-candidate refinement).
+  NdtResult runNdt(const pcl::PointCloud<pcl::PointXYZ>& query,
+                   const Eigen::Isometry3d& init) const;
+
  private:
   BevParams params_;
   const GlobalMap* map_ = nullptr;
@@ -50,12 +59,7 @@ class NdtGicpMatcher {
   small_gicp::PointCloud::Ptr map_pc_;
   small_gicp::KdTree<small_gicp::PointCloud>::Ptr map_tree_sg_;
 
-  void ensureBuilt() const;
   void build();
-
-  struct NdtResult { Eigen::Isometry3d pose; double fitness; };
-  NdtResult runNdt(const pcl::PointCloud<pcl::PointXYZ>& query,
-                   const Eigen::Isometry3d& init) const;
 
   struct GicpResult { Eigen::Isometry3d pose; double tight; double inlier; double resid; double precision; double normal_consistency; };
   GicpResult runGicp(const std::vector<Eigen::Vector3d>& query_pts,

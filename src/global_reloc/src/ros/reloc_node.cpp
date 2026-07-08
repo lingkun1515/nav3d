@@ -30,12 +30,7 @@ class RelocNode : public rclcpp::Node {
     this->declare_parameter<std::string>("map_key_path", "");
     this->declare_parameter<std::string>("params_path", "");
     this->declare_parameter<bool>("auto_retrigger", true);
-    // Reliability gate: only flag the pose as reliable (and, when gate_publish is
-    // on, only publish it) if the reloc's confidence (candidate distinctiveness)
-    // clears this threshold. confidence is a ground-truth-free reliability signal
-    // validated by scripts/verify_reliability.py against temporal consistency.
     this->declare_parameter<double>("min_confidence", 0.30);
-    this->declare_parameter<bool>("gate_publish", false);
     this->declare_parameter<std::string>("confidence_topic", "/reloc_confidence");
     this->declare_parameter<std::string>("reliable_topic", "/reloc_reliable");
 
@@ -50,22 +45,21 @@ class RelocNode : public rclcpp::Node {
         RCLCPP_WARN(this->get_logger(), "params load failed: %s", e.what());
       }
     }
-    // Optional ROS-param override for the coarse strategy (the loaded params file
-    // is the default). `fast` (~0.7 s, BEV+normal-yaw+GICP) is the right pick for
-    // the online integration — super_lio's own NDT/ICP refines the rough pose —
-    // while `ndt_gicp` (~90 s, brute-force NDT grid) maximizes standalone accuracy.
+    // Coarse strategy: params file is the default; ROS param can override.
     this->declare_parameter<std::string>("coarse_strategy", "");
     std::string coarse_strategy = this->get_parameter("coarse_strategy").as_string();
     if (!coarse_strategy.empty()) {
       params.coarse_strategy = coarse_strategy;
-      RCLCPP_INFO(this->get_logger(), "coarse_strategy override: %s", coarse_strategy.c_str());
     }
-    // Tune accumulation for online freshness: fewer frames = less staleness.
-    // The params file default is now 10 / 1.0 s; override per-scenario from launch.
-    this->declare_parameter<int>("accumulate_frames", params.accumulate_frames);
-    this->declare_parameter<double>("accumulate_max_dt", params.accumulate_max_dt);
-    params.accumulate_frames = this->get_parameter("accumulate_frames").as_int();
-    params.accumulate_max_dt = this->get_parameter("accumulate_max_dt").as_double();
+    // Node params from the shared params file (not ROS declare_parameter).
+    gravity_pitch_deg_ = params.gravity_pitch_deg;
+    gate_publish_ = params.gate_publish;
+
+    RCLCPP_INFO(this->get_logger(),
+        "params: coarse=%s gate=%d grav_pitch=%.1f accum=%d accum_dt=%.1f ndt_grid=%.1f ndt_yaw=%d",
+        params.coarse_strategy.c_str(), gate_publish_, gravity_pitch_deg_,
+        params.accumulate_frames, params.accumulate_max_dt,
+        params.bev.ndt_grid_step, params.bev.ndt_yaw_count);
     if (map_key.empty()) {
       RCLCPP_ERROR(this->get_logger(), "map_key_path not set; exiting");
       throw std::runtime_error("map_key_path required");
@@ -74,12 +68,18 @@ class RelocNode : public rclcpp::Node {
     RCLCPP_INFO(this->get_logger(), "map loaded: %zu pts", map->size());
 
     reloc_ = std::make_unique<Relocalizer>(params, map);
+    if (gravity_pitch_deg_ != 0.0) {
+      double pr = gravity_pitch_deg_ * M_PI / 180.0;
+      Eigen::Vector3d g(-std::sin(pr), 0.0, -std::cos(pr));
+      reloc_->setGravityAttitude(g);
+      RCLCPP_INFO(this->get_logger(), "gravity prior: pitch=%.1f deg  g=(%.3f, %.3f, %.3f)",
+                  gravity_pitch_deg_, g.x(), g.y(), g.z());
+    }
 
     std::string lidar_topic = this->get_parameter("lidar_topic").as_string();
     std::string init_pose_topic = this->get_parameter("init_pose_topic").as_string();
     std::string tracking_topic = this->get_parameter("tracking_state_topic").as_string();
     min_confidence_ = this->get_parameter("min_confidence").as_double();
-    gate_publish_ = this->get_parameter("gate_publish").as_bool();
     std::string conf_topic = this->get_parameter("confidence_topic").as_string();
     std::string reliable_topic = this->get_parameter("reliable_topic").as_string();
 
@@ -124,6 +124,12 @@ class RelocNode : public rclcpp::Node {
 
   void runReloc() {
     RelocResult r = reloc_->estimate();
+    static bool strategy_logged = false;
+    if (!strategy_logged) {
+      RCLCPP_INFO(this->get_logger(), "active strategy: %s  (cands=%d  converged=%d)",
+                  reloc_->params().coarse_strategy.c_str(), r.candidates_evaluated, r.converged);
+      strategy_logged = true;
+    }
     rclcpp::Time now = this->now();
     last_reloc_ = now;
     if (!r.converged) {
@@ -187,6 +193,7 @@ class RelocNode : public rclcpp::Node {
   bool auto_retrigger_ = true;
   bool gate_publish_ = false;
   double min_confidence_ = 0.0;   // diagnostic only (per-shot margin; flat w/o intensity)
+  double gravity_pitch_deg_ = 0.0;
   double max_speed_ = 2.0;        // [m/s] temporal-consistency motion limit
   double reloc_margin_ = 1.0;     // [m] extra tolerance for consistency check
   bool have_pending_ = false;
