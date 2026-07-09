@@ -74,7 +74,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='false',
                               description='使用仿真时间'),
         DeclareLaunchArgument('init_pose',
-                              default_value='[2.5,16.5,0.0,5.0,0.0,0.0]',
+                              default_value='[0.0,0.0,0.3,0.0,0.0,-0.0]',
                               description='重定位初值 [x,y,z,roll,pitch,yaw] (global_reloc:=true 时被忽略)'),
         DeclareLaunchArgument('global_reloc', default_value='false',
                               description="true=重定位时启用 global_reloc, super_lio 订阅 /initial_pose 作为初始预估 "

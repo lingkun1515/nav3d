@@ -30,7 +30,7 @@ export PATH="$PROJECT_DIR/install/global_reloc/lib/global_reloc:$PATH"
 
 # ---- config ----
 BAG="rosbag/lidar_with_pc2"
-MAP_PCD="src/bringup/maps/topsun.pcd"    # super_lio 先验 pcd
+MAP_PCD="src/bringup/maps/topsun1.pcd"    # super_lio 先验 pcd
 MAP_DIR="src/bringup/maps"                       # 中间产物统一放在 bringup/maps/
 MAP_GKEY="$MAP_DIR/reloc_map.gkey"               # global_reloc 的 .gkey（与 MAP_PCD 同源）
 

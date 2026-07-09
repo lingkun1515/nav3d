@@ -11,8 +11,8 @@ octo_planner_node:
 
     # Converter parameters
     resolution: 0.2
-    min_points_per_voxel: 3
-    min_cluster_voxels: 2
+    min_points_per_voxel: 1
+    min_cluster_voxels: 1
     enable_ground_infill: true
     ground_infill_neighbor_threshold: 3
     ground_infill_density_threshold: 0.02
@@ -63,8 +63,8 @@ octo_planner_node:
     # default; when enabled, min must be < max on each axis. For .world/.sdf
     # the box's XY footprint also bounds voxel generation.
     crop_box_enabled: true
-    crop_box_min: [-22.0, -8.0, -1.0]
-    crop_box_max: [10.0, 25.0, 6.0]
+    crop_box_min: [-35.0, -15.0, -1.0]
+    crop_box_max: [5.0, 20.0, 6.0]
 
     # Online incremental OctoMap update from real-time point cloud
     online_update_enabled: false
