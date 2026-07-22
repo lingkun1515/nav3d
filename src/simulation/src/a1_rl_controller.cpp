@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <cmath>
 
 namespace simulation {
 
@@ -118,16 +117,6 @@ void A1RLController::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr sdf) 
     // Record initial pose for odometry
     initial_pose_ = model_->WorldPose();
 
-    // Kinematic base: all links set to kinematic so robot stays upright without
-    // active balance. Robot is moved via SetWorldPose in OnUpdate based on cmd_vel.
-    for (auto link : model_->GetLinks()) {
-        link->SetKinematic(true);
-    }
-    controlled_pose_ = model_->WorldPose();
-    last_kinematic_time_ = model_->GetWorld()->SimTime();
-    RCLCPP_INFO_STREAM(rclcpp::get_logger("a1_rl_controller"),
-                       "Kinematic mode: robot moved via SetWorldPose");
-
     // Create ROS 2 node via gazebo_ros
     ros_node_ = gazebo_ros::Node::Get(sdf);
 
@@ -228,41 +217,87 @@ void A1RLController::LoadPolicy(const std::string& path) {
 void A1RLController::OnUpdate(const gazebo::common::UpdateInfo& info) {
     gazebo::common::Time now = info.simTime;
 
-    // Kinematic mode: move robot via SetWorldPose based on cmd_vel.
-    // Links are kinematic so robot stays upright without active balance.
-    // Check cmd_vel timeout — zero velocity if no recent command
-    if (now.Double() - last_cmd_vel_time_ > cmd_vel_timeout_) {
-        cmd_linear_x_ = 0.0;
-        cmd_linear_y_ = 0.0;
-        cmd_angular_z_ = 0.0;
+    // Read joint positions and velocities every step (Gazebo order: FR, FL, RR, RL)
+    std::array<float, 12> dof_pos;
+    std::array<float, 12> dof_vel;
+    for (int i = 0; i < 12; i++) {
+        dof_pos[i] = static_cast<float>(joints_[i]->Position(0));
+        dof_vel[i] = static_cast<float>(joints_[i]->GetVelocity(0));
     }
 
-    // Compute dt
-    double dt = (now - last_kinematic_time_).Double();
-    if (dt <= 0.0 || dt > 0.1) dt = 0.001;
-    last_kinematic_time_ = now;
-    double yaw = controlled_pose_.Rot().Yaw();
-    double vx = cmd_linear_x_;
-    double vy = cmd_linear_y_;
-    double wz = cmd_angular_z_;
+    if (state_ == STAND_UP) {
+        double stand_elapsed = now.Double() - stand_up_start_time_;
+        double percent = stand_elapsed / stand_up_duration_;
+        if (percent > 1.0) percent = 1.0;
 
-   double new_x = controlled_pose_.Pos().X() + (vx * std::cos(yaw) - vy * std::sin(yaw)) * dt;
-   double new_y = controlled_pose_.Pos().Y() + (vx * std::sin(yaw) + vy * std::cos(yaw)) * dt;
-   // Terrain following: probe ground height at new (x, y) and set Z accordingly.
-   // This allows the robot to climb ramps and navigate multi-floor environments.
-   double ground_z = GetGroundHeight(new_x, new_y);
-   double new_z = ground_z + standing_height_;
-   double new_yaw = yaw + wz * dt;
+        // Interpolate from start_pos to default_dof_pos (Gazebo joint order)
+        for (int i = 0; i < 12; i++) {
+            int rl_idx = reindex_[i];
+            float target = (1.0f - static_cast<float>(percent)) * start_pos_[i] +
+                           static_cast<float>(percent) * default_dof_pos_[rl_idx];
+            target_q_[i] = target;
+            float torque = kp_stand_up_ * (target - dof_pos[i]) - kd_stand_up_ * dof_vel[i];
+            joints_[i]->SetForce(0, torque);
+        }
 
-   controlled_pose_ = ignition::math::Pose3d(
-        ignition::math::Vector3d(new_x, new_y, new_z),
-        ignition::math::Quaterniond(0, 0, new_yaw));
-    model_->SetWorldPose(controlled_pose_); 
+        if (percent >= 1.0) {
+            state_ = RL_RUNNING;
+            last_infer_time_ = now;
+            RCLCPP_INFO_STREAM(rclcpp::get_logger("a1_rl_controller"),
+                               "Stand-up complete, switching to RL_RUNNING");
+        }
+    } else {
+        // RL_RUNNING — throttle inference to 50Hz, apply PD torque every step
+        double elapsed = (now - last_infer_time_).Double();
+        if (elapsed >= infer_duration_) {
+            last_infer_time_ = now;
 
-    // Hold joints at default standing pose
-    for (int i = 0; i < 12; i++) {
-        int rl_idx = reindex_[i];
-        joints_[i]->SetPosition(0, default_dof_pos_[rl_idx]);
+            if (CheckSafety()) {
+                for (int i = 0; i < 12; i++) {
+                    target_q_[i] = default_dof_pos_[reindex_[i]];
+                }
+            } else {
+                RefreshObservation();
+
+                std::vector<float> input_data(HISTORY_LEN * OBS_DIM);
+                std::memcpy(input_data.data(), obs_history_.data(),
+                            HISTORY_LEN * OBS_DIM * sizeof(float));
+
+                std::vector<const char*> input_names = {input_name_.c_str()};
+                std::vector<const char*> output_names = {output_name_.c_str()};
+
+                std::vector<Ort::Value> input_tensors;
+                input_tensors.push_back(Ort::Value::CreateTensor<float>(
+                    memory_info_, input_data.data(), input_data.size(),
+                    input_shape_.data(), input_shape_.size()));
+
+                try {
+                    auto output_tensors =
+                        ort_session_->Run(Ort::RunOptions{nullptr}, input_names.data(),
+                                          input_tensors.data(), 1, output_names.data(), 1);
+
+                    float* action_data = output_tensors[0].GetTensorMutableData<float>();
+                    std::array<float, 12> actions;
+                    std::memcpy(actions.data(), action_data, 12 * sizeof(float));
+
+                    last_actions_ = actions;
+
+                    for (int i = 0; i < 12; i++) {
+                        int rl_idx = reindex_[i];
+                        target_q_[i] = actions[rl_idx] * 0.25f + default_dof_pos_[rl_idx];
+                    }
+                } catch (const Ort::Exception& e) {
+                    RCLCPP_ERROR_STREAM(rclcpp::get_logger("a1_rl_controller"),
+                                        "ONNX inference error: " << e.what());
+                }
+            }
+        }
+
+        // PD torque tracking — EVERY physics step
+        for (int i = 0; i < 12; i++) {
+            float torque = kp_rl_ * (target_q_[i] - dof_pos[i]) - kd_rl_ * dof_vel[i];
+            joints_[i]->SetForce(0, torque);
+        }
     }
 
     // Publish state (throttled)
@@ -278,62 +313,6 @@ void A1RLController::CmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr m
     cmd_linear_y_ = msg->linear.y;
     cmd_angular_z_ = msg->angular.z;
     last_cmd_vel_time_ = model_->GetWorld()->SimTime().Double();
-}
-
-double A1RLController::GetGroundHeight(double x, double y) {
-    // Terrain following: compute ground height at (x, y).
-    // 1. If on a ramp, use linear interpolation along Y.
-    // 2. Otherwise, pick the flat floor surface closest to current height.
-    double current_ground_z = controlled_pose_.Pos().Z() - standing_height_;
-    auto world = model_->GetWorld();
-    if (!world) return 0.0;
-
-    // Pass 1: check if on a ramp
-    for (auto m : world->Models()) {
-        if (!m->IsStatic() || m == model_) continue;
-        std::string name = m->GetName();
-        if (name.find("ramp") == std::string::npos) continue;
-
-        auto bbox = m->BoundingBox();
-        if (x >= bbox.Min().X() && x <= bbox.Max().X() &&
-            y >= bbox.Min().Y() && y <= bbox.Max().Y()) {
-            // Linear interpolation along Y
-            double t = (y - bbox.Min().Y()) / std::max(0.01, bbox.Max().Y() - bbox.Min().Y());
-            t = std::max(0.0, std::min(1.0, t));
-            double ramp_z = bbox.Min().Z() + t * (bbox.Max().Z() - bbox.Min().Z());
-            return ramp_z;
-        }
-    }
-
-    // Pass 2: find closest flat floor surface
-    double best_z = 0.0;
-    double min_dist = 1e9;
-    for (auto m : world->Models()) {
-        if (!m->IsStatic() || m == model_) continue;
-        std::string name = m->GetName();
-        if (name.find("ground_plane") != std::string::npos) continue;
-        if (name == "sun") continue;
-        if (name.find("ramp") != std::string::npos) continue;
-        // Only consider floor models (flat surfaces)
-        if (name.find("floor_01_floor") == std::string::npos) continue;
-
-        auto bbox = m->BoundingBox();
-        if (x >= bbox.Min().X() && x <= bbox.Max().X() &&
-            y >= bbox.Min().Y() && y <= bbox.Max().Y()) {
-            double top_z = bbox.Max().Z();
-            double dist = std::abs(top_z - current_ground_z);
-            if (dist < min_dist) {
-                min_dist = dist;
-                best_z = top_z;
-            }
-        }
-    }
-
-    // If no floor found, maintain current ground height
-    if (best_z == 0.0 && current_ground_z > 0.1) {
-        return current_ground_z;
-    }
-    return best_z;
 }
 
 void A1RLController::RefreshObservation() {
